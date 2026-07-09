@@ -67,8 +67,10 @@ ENTITLEMENTS := Support/MoDict.entitlements
 PLIST_IN     := Support/Info.plist.in
 SIGNATURE_DIAGNOSTICS := scripts/signature-diagnostics.sh
 
-# Guard rails for recursive release targets. Normal dev builds may fall back to
-# ad-hoc with loud warnings; release targets set ALLOW_ADHOC=0 and fail closed.
+# Guard rails. Ad-hoc signing must be requested explicitly (IDENTITY=-); a
+# missing identity is always a hard error, because a silent ad-hoc fallback
+# breaks TCC persistence (permissions re-requested on every rebuild).
+# Release targets additionally set ALLOW_ADHOC=0 to forbid even explicit ad-hoc.
 ALLOW_ADHOC ?= 1
 REQUIRE_DEVELOPER_ID ?= 0
 
@@ -150,18 +152,12 @@ sign: bundle
 		case "$(IDENTITY)" in Developer\ ID\ Application:*) TIMESTAMP_FLAG="--timestamp";; esac; \
 		codesign --force --deep --options runtime --generate-entitlement-der --entitlements "$(ENTITLEMENTS)" $$TIMESTAMP_FLAG --sign "$(IDENTITY)" "$(APP)"; \
 	else \
-		if [ "$(ALLOW_ADHOC)" != "1" ]; then \
-			echo "error: signing identity \"$(IDENTITY)\" not found."; \
-			echo "error: refusing ad-hoc fallback because ALLOW_ADHOC=0."; \
-			exit 2; \
-		fi; \
-		echo "warning: signing identity \"$(IDENTITY)\" not found; falling back to ad-hoc."; \
-		echo "warning: an ad-hoc signature changes on every rebuild, so macOS re-requests"; \
-		echo "warning: Microphone, Accessibility and Input Monitoring each time you build."; \
-		echo "warning: this build is DEV/CI ONLY and must not be shipped or treated as pre-prod."; \
-		echo "warning: run ./scripts/dev-cert.sh once to create a stable \"MoDict Dev\" identity."; \
-		echo "warning: run make developer-id IDENTITY=\"Developer ID Application: ...\" for release signing."; \
-		codesign --force --deep --options runtime --generate-entitlement-der --entitlements "$(ENTITLEMENTS)" --sign - "$(APP)"; \
+		echo "error: signing identity \"$(IDENTITY)\" not found (keychain locked, or the cert is missing)."; \
+		echo "error: an ad-hoc build would break TCC: macOS re-requests Microphone, Accessibility"; \
+		echo "error: and Input Monitoring on every rebuild, and the Settings toggles stop sticking."; \
+		echo "error: run ./scripts/dev-cert.sh once to create a stable \"MoDict Dev\" identity,"; \
+		echo "error: or pass IDENTITY=- explicitly for a throwaway ad-hoc build (CI only)."; \
+		exit 2; \
 	fi
 	codesign --verify --strict --deep --verbose "$(APP)"
 	@echo "Signed $(APP). Run 'make diagnose-signature' to inspect the release posture."
