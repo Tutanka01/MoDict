@@ -129,9 +129,14 @@ Implementation notes (validated against FluidAudio 0.15.5 source — README snip
 @MainActor final class HotkeyMonitor {
     enum Mode: String, CaseIterable { case pushToTalk, toggle, hybrid }
     var mode: Mode                       // set by controller from settings
-    var onBegin: (() -> Void)?           // start recording (main thread)
+    /// Start recording. Returns whether the controller actually accepted — the
+    /// monitor only opens a session on `true`, so a declined begin (model not
+    /// ready, mic missing, engine busy) can never leave a phantom hands-free
+    /// session that would swallow the next key press.
+    var onBegin: (() -> Bool)?
     var onEnd: (() -> Void)?             // stop + transcribe (main thread)
     var onCancel: (() -> Void)?          // combo interruption or Esc (main thread)
+    var onPermissionLost: (() -> Void)?  // tap died and could not be re-armed
     /// Creates the CGEventTap. Returns false when Input Monitoring permission is missing.
     @discardableResult func start() -> Bool
     func stop()
@@ -208,7 +213,11 @@ System sounds by path (`/System/Library/Sounds/…`), preloaded, `volume ≈ 0.3
 ### TextInserter [insert] — `TextInserter.swift`
 
 ```swift
-enum InsertOutcome: Sendable { case inserted, secureInputBlocked, noAccessibilityPermission, failed }
+enum InsertOutcome: Equatable, Sendable {
+    enum FailureReason: Equatable, Sendable { case pasteboardWriteFailed, pasteShortcutFailed, cancelled }
+    case inserted, secureInputBlocked, noAccessibilityPermission
+    case failed(FailureReason)
+}
 
 @MainActor final class TextInserter {
     init(settings: SettingsStore)
@@ -293,9 +302,15 @@ The view drives real actions: `Permissions.*`, `app.controller.prepareEngine()`,
 - `DictationController`: the only place that mutates dictation state. Public:
   `phase: Phase { idle, recording, transcribing }` (`@Published`),
   `modelState: ModelState { unknown, needsDownload, downloading(ModelDownloadProgress), ready,
-  failed(String) }` (`@Published`), `lastInsertedText: String?`,
-  `activate()` (start hotkey + prepare engine), `deactivate()`, `prepareEngine() async`,
-  `startDictation()`, `stopDictationAndTranscribe()`, `cancelDictation()`.
+  failed(String) }` (`@Published`), `userIssue: UserIssue?` (`@Published`, last actionable
+  problem for the menu bar/HUD), `lastInsertedText: String?`,
+  `activate()` (start hotkey + prepare engine), `deactivate()`,
+  `prepareEngine(force: Bool = false)` (force re-runs even when `.ready` — Settings
+  Re-download), `setDictationEnabled(_:)`, `startDictation() -> Bool` (false when the begin
+  is declined so the hotkey monitor never opens a phantom session),
+  `stopDictationAndTranscribe()`, `cancelDictation()`. Transcription runs under a timeout
+  (`max(30 s, 4×audio + 5 s)`) so a wedged engine can never leave the app stuck in
+  `.transcribing`.
 
 ## Concurrency rules
 

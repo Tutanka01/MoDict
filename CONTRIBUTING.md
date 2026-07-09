@@ -27,7 +27,7 @@ MoDict builds with pure SwiftPM and the Command Line Tools. You do **not** need 
 **Build and run**
 
 ```sh
-git clone https://github.com/mohanadzhiri/MoDict.git
+git clone https://github.com/Tutanka01/MoDict.git
 cd MoDict
 swift build                 # compile only
 make                        # assemble a universal MoDict.app into build/

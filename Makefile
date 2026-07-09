@@ -69,13 +69,26 @@ SIGNATURE_DIAGNOSTICS := scripts/signature-diagnostics.sh
 ALLOW_ADHOC ?= 1
 REQUIRE_DEVELOPER_ID ?= 0
 
-.PHONY: all build universal icon bundle sign sign-adhoc diagnose-signature validate-release validate-notarized-release developer-id notarize run clean
+.PHONY: all build test universal icon bundle sign sign-adhoc diagnose-signature validate-release validate-notarized-release developer-id notarize run clean
 .DEFAULT_GOAL := all
 
 all: sign
 
 build:
 	swift build -c release $(SWIFT_FLAGS)
+
+# Command Line Tools alone cannot execute tests (no xctest host): `swift test`
+# then builds the suite but silently runs nothing. Detect that and say so
+# instead of pretending the suite passed. CI (full Xcode) runs them for real.
+test:
+	@if xcrun --find xctest >/dev/null 2>&1; then \
+		swift test; \
+	else \
+		swift build --build-tests && \
+		echo "warning: tests COMPILED but were NOT RUN — Command Line Tools" && \
+		echo "warning: have no xctest host. They run for real in CI (macos-26)" && \
+		echo "warning: or locally with full Xcode installed."; \
+	fi
 
 universal:
 	$(MAKE) sign SWIFT_FLAGS="--arch arm64 --arch x86_64" BINARY=$(UNIVERSAL_BIN)

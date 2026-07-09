@@ -212,7 +212,7 @@ private struct SettingsModelTab: View {
                 }
 
                 HStack {
-                    Button("Re-download") { controller.prepareEngine() }
+                    Button("Re-download") { controller.prepareEngine(force: true) }
                         .disabled(isDownloading)
                     Spacer()
                     Button("Reveal in Finder") {
@@ -230,7 +230,7 @@ private struct SettingsModelTab: View {
 // MARK: - About
 
 private struct SettingsAboutTab: View {
-    private let repositoryURL = URL(string: "https://github.com/mohanadzhiri/MoDict")!
+    private let repositoryURL = URL(string: "https://github.com/Tutanka01/MoDict")!
 
     private var versionText: String {
         let short = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0"
@@ -258,12 +258,15 @@ private struct SettingsAboutTab: View {
                         Text(versionText)
                             .font(.system(size: 12))
                             .foregroundStyle(.secondary)
+                        Text("Created by Mohamad El Akhal")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
                     }
                     Spacer(minLength: 0)
                 }
 
                 Link(destination: repositoryURL) {
-                    Label("github.com/mohanadzhiri/MoDict", systemImage: "arrow.up.right")
+                    Label("github.com/Tutanka01/MoDict", systemImage: "arrow.up.right")
                 }
             }
 

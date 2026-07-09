@@ -37,5 +37,7 @@
     <true/>
     <key>NSMicrophoneUsageDescription</key>
     <string>MoDict records audio while you hold the dictation key, then transcribes it entirely on this Mac.</string>
+    <key>NSHumanReadableCopyright</key>
+    <string>© 2026 Mohamad El Akhal — MIT License</string>
 </dict>
 </plist>

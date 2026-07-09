@@ -130,6 +130,10 @@ The Parakeet-TDT 0.6B v3 weights are distributed by NVIDIA under
 [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/); using them requires crediting
 NVIDIA, which this project does here and in Settings → About.
 
+## Credits
+
+MoDict is created and maintained by **Mohamad El Akhal**.
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, code style, file ownership, and how to

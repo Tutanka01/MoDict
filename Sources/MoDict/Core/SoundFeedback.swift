@@ -15,9 +15,10 @@ final class SoundFeedback {
 
     init(settings: SettingsStore) {
         self.settings = settings
-        self.startSound = SoundFeedback.loadSound(named: "Tink")
-        self.successSound = SoundFeedback.loadSound(named: "Pop")
-        self.failureSound = SoundFeedback.loadSound(named: "Basso")
+        // Volumes per Docs/DESIGN.md → "Sound & haptics".
+        self.startSound = SoundFeedback.loadSound(named: "Tink", volume: 0.35)
+        self.successSound = SoundFeedback.loadSound(named: "Pop", volume: 0.3)
+        self.failureSound = SoundFeedback.loadSound(named: "Basso", volume: 0.3)
     }
 
     func dictationStarted() {
@@ -36,10 +37,10 @@ final class SoundFeedback {
 
     // MARK: - Private
 
-    private static func loadSound(named name: String) -> NSSound? {
+    private static func loadSound(named name: String, volume: Float) -> NSSound? {
         // `byReference: true` keeps the file on disk rather than in memory.
         let sound = NSSound(contentsOfFile: "/System/Library/Sounds/\(name).aiff", byReference: true)
-        sound?.volume = 0.3
+        sound?.volume = volume
         return sound
     }
 

@@ -44,6 +44,10 @@ private struct HUDCapsule: View {
             .frame(height: Theme.hudHeight)
             .frame(width: fixedWidth)
             .frame(maxWidth: Theme.hudErrorMaxWidth)
+            // fixedSize makes the frame stack resolve against the content's ideal
+            // width instead of the (340 pt) hosting proposal — without it the
+            // maxWidth frame stretches the capsule to 260 pt in every state.
+            .fixedSize(horizontal: true, vertical: false)
             .background(.ultraThinMaterial, in: Capsule())
             .overlay(
                 Capsule().strokeBorder(Theme.hairline(for: scheme), lineWidth: 0.5)

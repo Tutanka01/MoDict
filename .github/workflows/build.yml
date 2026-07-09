@@ -13,6 +13,11 @@ jobs:
       - name: Swift version
         run: swift --version
 
+      # Runs for real here: the runner has full Xcode. Local CLT-only setups
+      # cannot execute tests (no xctest host) — see `make test`.
+      - name: Run tests
+        run: swift test
+
       - name: Build (release, arm64)
         run: swift build -c release
 

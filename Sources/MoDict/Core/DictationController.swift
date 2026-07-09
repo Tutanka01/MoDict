@@ -230,8 +230,11 @@ final class DictationController: ObservableObject {
     }
 
     /// Download (if needed) and load the Parakeet model, publishing progress.
-    func prepareEngine() {
-        guard prepareTask == nil, modelState != .ready else { return }
+    /// `force` re-runs preparation even when the model is already loaded, so the
+    /// Settings "Re-download" button has an effect in the `.ready` state.
+    func prepareEngine(force: Bool = false) {
+        guard prepareTask == nil else { return }
+        if !force, modelState == .ready { return }
         modelState = FluidAudioEngine.modelsExistOnDisk()
             ? .downloading(ModelDownloadProgress(phase: .checking, fraction: 0))
             : .needsDownload
