@@ -13,11 +13,6 @@ superwhisper, built to disappear until you need it.
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-555.svg)](LICENSE)
 [![Platform: macOS 14+](https://img.shields.io/badge/platform-macOS%2014%2B%20·%20Apple%20Silicon-555.svg)](#requirements)
 
-<!-- TODO(docs): replace with a real capture of the recording HUD over a text editor -->
-<p align="center">
-  <img src="Docs/assets/hud.png" alt="The MoDict capsule while recording, floating above a text editor" width="440">
-</p>
-
 ## Why MoDict
 
 - **Your voice never leaves your Mac.** Audio is captured, transcribed, and discarded
