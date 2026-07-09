@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+      No App Sandbox on purpose.
+
+      MoDict posts synthetic Command-V CGEvents into whatever app is focused and
+      reads global keyboard state to detect the right-Command hotkey. The App
+      Sandbox forbids both, so it cannot be enabled here — which also means the
+      app cannot ship on the Mac App Store. Distribution is Developer ID +
+      notarization (or build-from-source and self-sign).
+
+      Accessibility and Input Monitoring are NOT entitlements: they are TCC
+      authorizations the user grants at runtime in System Settings > Privacy &
+      Security. Only the microphone entitlements belong in this file.
+
+      On macOS 26 a Hardened Runtime build WITHOUT the audio-input entitlement
+      never receives a Microphone entry in Privacy settings and the permission
+      prompt never fires, so both keys below are required when signing with
+      --options runtime.
+    -->
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
+    <!-- Legacy alias kept for older systems. -->
+    <key>com.apple.security.device.microphone</key>
+    <true/>
+</dict>
+</plist>

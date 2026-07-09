@@ -1,0 +1,33 @@
+name: build
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Swift version
+        run: swift --version
+
+      - name: Build (release, arm64)
+        run: swift build -c release
+
+      - name: Assemble app bundle
+        run: make bundle
+
+      # No stable signing identity on CI, so sign ad-hoc explicitly.
+      - name: Sign (ad-hoc)
+        run: make sign IDENTITY=-
+
+      - name: Inspect binary architectures
+        run: lipo -info build/MoDict.app/Contents/MacOS/MoDict
+
+      - name: Upload app bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: MoDict.app
+          path: build/MoDict.app
