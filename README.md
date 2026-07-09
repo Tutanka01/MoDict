@@ -8,7 +8,7 @@ editor, your browser, a chat box, a terminal. Transcription runs on the Apple Ne
 Engine. No cloud, no account, no telemetry. An open-source alternative to Wispr Flow and
 superwhisper, built to disappear until you need it.
 
-[![CI](https://github.com/mohanadzhiri/MoDict/actions/workflows/build.yml/badge.svg)](https://github.com/mohanadzhiri/MoDict/actions/workflows/build.yml)
+[![CI](https://github.com/Tutanka01/MoDict/actions/workflows/build.yml/badge.svg)](https://github.com/Tutanka01/MoDict/actions/workflows/build.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-555.svg)](LICENSE)
 [![Platform: macOS 14+](https://img.shields.io/badge/platform-macOS%2014%2B%20·%20Apple%20Silicon-555.svg)](#requirements)
 
@@ -41,7 +41,7 @@ superwhisper, built to disappear until you need it.
 
 ### From Releases
 
-1. Download `MoDict.app` from the [latest release](https://github.com/mohanadzhiri/MoDict/releases).
+1. Download `MoDict.app` from the [latest release](https://github.com/Tutanka01/MoDict/releases).
 2. Move it to `/Applications`.
 3. The build is not notarized, so macOS quarantines it. Clear the flag once:
 
@@ -57,7 +57,7 @@ Command Line Tools are enough — you do **not** need Xcode.
 
 ```sh
 xcode-select --install          # if you don't already have the CLT
-git clone https://github.com/mohanadzhiri/MoDict.git
+git clone https://github.com/Tutanka01/MoDict.git
 cd MoDict
 make            # builds a universal .app into build/
 make run        # builds and launches it
