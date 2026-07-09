@@ -9,7 +9,8 @@ Engine. No cloud, no account, no telemetry. An open-source alternative to Wispr 
 superwhisper, built to disappear until you need it.
 
 [![CI](https://github.com/Tutanka01/MoDict/actions/workflows/build.yml/badge.svg)](https://github.com/Tutanka01/MoDict/actions/workflows/build.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-555.svg)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/Tutanka01/MoDict?color=555)](https://github.com/Tutanka01/MoDict/releases/latest)
+[![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-555.svg)](LICENSE)
 [![Platform: macOS 14+](https://img.shields.io/badge/platform-macOS%2014%2B%20·%20Apple%20Silicon-555.svg)](#requirements)
 
 <!-- TODO(docs): replace with a real capture of the recording HUD over a text editor -->
@@ -39,19 +40,24 @@ superwhisper, built to disappear until you need it.
 
 ## Install
 
-### From Releases
+### Option 1 — Download the DMG (recommended)
 
-1. Download `MoDict.app` from the [latest release](https://github.com/Tutanka01/MoDict/releases).
-2. Move it to `/Applications`.
-3. The build is not notarized, so macOS quarantines it. Clear the flag once:
+1. Download `MoDict-x.y.z.dmg` from the
+   [latest release](https://github.com/Tutanka01/MoDict/releases/latest).
+2. Open the DMG and drag **MoDict** onto the **Applications** folder.
+3. The build is not yet notarized by Apple, so macOS quarantines it. Clear the flag
+   once in Terminal:
 
    ```sh
    xattr -dr com.apple.quarantine /Applications/MoDict.app
    ```
 
-4. Launch it. Onboarding walks you through permissions and the model download.
+   Without this step macOS shows *"MoDict is damaged and can't be opened"* — that
+   message is Gatekeeper's wording for "unsigned download", not actual damage.
+4. Launch MoDict. Onboarding walks you through the three permissions and the one-time
+   speech-model download.
 
-### Build from source
+### Option 2 — Build from source
 
 Command Line Tools are enough — you do **not** need Xcode.
 
@@ -59,13 +65,24 @@ Command Line Tools are enough — you do **not** need Xcode.
 xcode-select --install          # if you don't already have the CLT
 git clone https://github.com/Tutanka01/MoDict.git
 cd MoDict
-make            # builds a universal .app into build/
+make            # builds, bundles, and signs build/MoDict.app
 make run        # builds and launches it
+make dmg        # optional: package the app into build/MoDict-<version>.dmg
 ```
 
 The first launch asks for the three permissions described below. If you plan to rebuild
 often, sign with a stable certificate so the permissions persist across builds — see
 [CONTRIBUTING.md](CONTRIBUTING.md#stable-signing-for-permissions).
+
+### Uninstall
+
+MoDict keeps almost nothing on disk. To remove it completely:
+
+```sh
+rm -rf /Applications/MoDict.app
+rm -rf ~/Library/Application\ Support/FluidAudio   # the downloaded speech model
+defaults delete com.modict.app                     # settings
+```
 
 ## First launch
 
@@ -95,6 +112,20 @@ Three activation styles (set in Settings → General; **Hybrid** is the default)
 Press **Esc** while recording to cancel — nothing is inserted. The last five
 transcriptions live in the menu bar popover; click one to copy it again.
 
+## Troubleshooting
+
+- **"MoDict is damaged and can't be opened."** The download is quarantined because the
+  build isn't notarized yet. Run
+  `xattr -dr com.apple.quarantine /Applications/MoDict.app` and open it again.
+- **Nothing happens when I hold right ⌘.** Check System Settings → Privacy & Security →
+  Input Monitoring and Accessibility: MoDict must be enabled in both. If you rebuilt
+  from source, macOS may have revoked the grants — toggle them off and on.
+- **Text lands in the wrong app.** The paste goes to whichever window has keyboard
+  focus when transcription finishes; click into the target field before releasing the
+  key.
+- **The model download stalls.** It comes from Hugging Face (~482 MB, one time). Use
+  Settings → Model → Re-download after checking your connection.
+
 ## How it works
 
 1. A `CGEventTap` watches the right ⌘ key and starts capturing 16 kHz mono audio through
@@ -116,13 +147,29 @@ documented in [Docs/ARCHITECTURE.md](Docs/ARCHITECTURE.md).
   disk.
 - The clipboard is snapshotted before each insert and restored afterward.
 
-## Licenses & attribution
+## Releases
 
-MoDict is free software and builds on the work of others. Attribution is required.
+Every version tag pushed to this repository triggers a
+[release workflow](.github/workflows/release.yml) that runs the test suite, builds the
+app, packages it into a DMG, and publishes it on the
+[Releases page](https://github.com/Tutanka01/MoDict/releases) — so what you download is
+exactly what CI built from the tagged source. Builds are currently ad-hoc signed;
+Developer ID signing and notarization are planned, which will remove the quarantine
+step above.
+
+## License & attribution
+
+MoDict is free software, licensed under the
+[GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0). You can use, study,
+modify, and redistribute it — but any derivative or application built on top of it must
+be released under the same license, with source available and the original credits
+kept. Closed-source forks and uncredited rebrands are not permitted.
+
+MoDict builds on the work of others; attribution is required:
 
 | Component | License |
 |---|---|
-| MoDict | [MIT](LICENSE) |
+| MoDict | [AGPL-3.0](LICENSE) |
 | [FluidAudio](https://github.com/FluidInference/FluidAudio) | Apache-2.0 |
 | [Parakeet-TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) model weights | CC-BY-4.0 — © NVIDIA |
 

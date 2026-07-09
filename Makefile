@@ -15,6 +15,7 @@
 #   make developer-id
 #                   build a universal Developer ID signed app (not notarized yet)
 #   make notarize   submit the Developer ID build to notarytool and staple it
+#   make dmg        package the signed app into a drag-to-install disk image
 #   make run        build, sign, and launch the app directly (dev)
 #   make clean      remove .build and build
 #
@@ -59,6 +60,8 @@ ICON_PNG := $(BUILD_DIR)/Icon-1024.png
 ICONSET  := $(BUILD_DIR)/AppIcon.iconset
 ICNS     := $(BUILD_DIR)/AppIcon.icns
 RELEASE_ZIP := $(BUILD_DIR)/$(APP_NAME)-$(VERSION)-$(BUILD).zip
+DMG         := $(BUILD_DIR)/$(APP_NAME)-$(VERSION).dmg
+DMG_STAGING := $(BUILD_DIR)/dmg-staging
 
 ENTITLEMENTS := Support/MoDict.entitlements
 PLIST_IN     := Support/Info.plist.in
@@ -69,7 +72,7 @@ SIGNATURE_DIAGNOSTICS := scripts/signature-diagnostics.sh
 ALLOW_ADHOC ?= 1
 REQUIRE_DEVELOPER_ID ?= 0
 
-.PHONY: all build test universal icon bundle sign sign-adhoc diagnose-signature validate-release validate-notarized-release developer-id notarize run clean
+.PHONY: all build test universal icon bundle sign sign-adhoc diagnose-signature validate-release validate-notarized-release developer-id notarize dmg run clean
 .DEFAULT_GOAL := all
 
 all: sign
@@ -205,6 +208,22 @@ notarize: validate-release
 	xcrun stapler staple "$(APP)"
 	$(MAKE) validate-notarized-release
 	@echo "Notarized release artifact: $(APP)"
+
+# Package the already-built-and-signed app into a compressed disk image with a
+# /Applications symlink, so installing is "drag the icon onto the folder".
+# Does not rebuild: run after `make`, `make universal` or `make developer-id`
+# so the DMG contains exactly the app you validated. Release DMGs must come
+# from a Developer ID + notarized app; an ad-hoc one forces every user to
+# clear quarantine by hand (documented in the README as the interim path).
+dmg:
+	@test -d "$(APP)" || { echo "error: $(APP) not found — run 'make' first."; exit 2; }
+	rm -rf "$(DMG_STAGING)" "$(DMG)"
+	mkdir -p "$(DMG_STAGING)"
+	cp -R "$(APP)" "$(DMG_STAGING)/"
+	ln -s /Applications "$(DMG_STAGING)/Applications"
+	hdiutil create -volname "$(APP_NAME)" -srcfolder "$(DMG_STAGING)" -ov -format UDZO "$(DMG)"
+	rm -rf "$(DMG_STAGING)"
+	@echo "Disk image: $(DMG)"
 
 # Launch the binary directly rather than via `open`. Going through LaunchServices
 # races TCC on freshly signed builds and can strip the permission grant; a direct

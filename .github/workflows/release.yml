@@ -1,0 +1,69 @@
+# Publishes a downloadable DMG on GitHub Releases every time a version tag is
+# pushed. Usage:
+#
+#   git tag v0.1.0
+#   git push origin v0.1.0
+#
+# The DMG is ad-hoc signed (no Developer ID identity lives on CI), so the
+# README documents the one-time quarantine removal for users. If a Developer
+# ID certificate is added later, import it in a keychain step and drop the
+# IDENTITY=- override below, then add a `make notarize` step.
+
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run tests
+        run: swift test
+
+      # Strip the leading "v" from the tag so the DMG is MoDict-0.1.0.dmg.
+      - name: Derive version from tag
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+
+      - name: Build, bundle, and sign (ad-hoc)
+        run: make sign IDENTITY=- VERSION="$VERSION"
+
+      - name: Package DMG
+        run: make dmg VERSION="$VERSION"
+
+      - name: Verify DMG contents
+        run: |
+          hdiutil attach "build/MoDict-$VERSION.dmg" -nobrowse -readonly -mountpoint /Volumes/MoDict-verify
+          test -d /Volumes/MoDict-verify/MoDict.app
+          test -L /Volumes/MoDict-verify/Applications
+          codesign --verify --strict --deep --verbose=2 /Volumes/MoDict-verify/MoDict.app
+          hdiutil detach /Volumes/MoDict-verify
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/MoDict-*.dmg
+          generate_release_notes: true
+          draft: false
+          body: |
+            ## Install
+
+            1. Download `MoDict-${{ env.VERSION }}.dmg` below.
+            2. Open it and drag **MoDict** onto the **Applications** folder.
+            3. This build is not notarized yet, so clear the quarantine flag once:
+
+               ```sh
+               xattr -dr com.apple.quarantine /Applications/MoDict.app
+               ```
+
+            4. Launch MoDict — onboarding walks you through permissions and the
+               one-time speech-model download (~482 MB).
+
+            Requires macOS 14+ on Apple Silicon.

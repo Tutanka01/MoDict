@@ -271,6 +271,8 @@ private struct SettingsAboutTab: View {
             }
 
             Section {
+                Text("MoDict — AGPL-3.0")
+                    .foregroundStyle(.secondary)
                 Text("FluidAudio — Apache-2.0")
                     .foregroundStyle(.secondary)
                 Text("Parakeet-TDT 0.6B v3 — CC-BY-4.0 · NVIDIA")

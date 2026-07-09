@@ -158,4 +158,6 @@ Before a pre-prod build, run the broader P1 pass in [Docs/QA.md](Docs/QA.md).
 - Keep the tone of issues and reviews calm and specific — the same voice the app uses.
 
 By contributing, you agree that your contributions are licensed under the project's
-[MIT license](LICENSE).
+[GNU AGPL-3.0 license](LICENSE). In short: anyone may use, study, and modify MoDict,
+but anything built on top of it must stay open source under the same license and keep
+the original credits.
