@@ -35,6 +35,9 @@ struct MenuBarView: View {
             MenuBar.Footer(settings: settings, controller: controller)
         }
         .frame(width: 300)
+        // Opening the popover is the natural "did my grant take?" moment after a
+        // trip to System Settings — reconcile stale permission issues right away.
+        .onAppear { controller.recheckPermissions() }
     }
 
     private var status: MenuBar.Status {

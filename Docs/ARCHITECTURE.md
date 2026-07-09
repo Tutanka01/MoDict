@@ -279,7 +279,7 @@ mouse pointer. All visuals per Docs/DESIGN.md.
 @MainActor final class OnboardingController {
     init(app: AppModel)
     static func isNeeded(settings: SettingsStore) -> Bool
-    // true if !settings.onboardingCompleted || any permission missing || !FluidAudioEngine.modelsExistOnDisk()
+    // true if !settings.onboardingCompleted || !FluidAudioEngine.modelsExistOnDisk()
     func present()   // activates app (.regular policy), shows window, restores .accessory on close
 }
 ```

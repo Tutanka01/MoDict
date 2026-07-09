@@ -73,8 +73,70 @@ private struct SettingsGeneralTab: View {
                 Toggle("Play sounds", isOn: $settings.playSounds)
                 Toggle("Haptic feedback", isOn: $settings.hapticFeedback)
             }
+
+            SettingsPermissionsSection(controller: controller)
         }
         .formStyle(.grouped)
+    }
+}
+
+// MARK: - Permissions
+
+/// Live view of the three TCC grants. Polls once a second while the window is
+/// open (TCC has no change notification) and nudges the controller so the event
+/// tap re-arms the moment Input Monitoring is granted.
+private struct SettingsPermissionsSection: View {
+    let controller: DictationController
+
+    @State private var micGranted = Permissions.microphoneGranted
+    @State private var accessibilityGranted = Permissions.accessibilityGranted
+    @State private var inputMonitoringGranted = Permissions.inputMonitoringGranted
+    @State private var pollTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+
+    var body: some View {
+        Section {
+            row("Microphone", granted: micGranted, pane: .microphone) {
+                Permissions.openSettings(pane: .microphone)
+            }
+            row("Accessibility", granted: accessibilityGranted, pane: .accessibility) {
+                Permissions.requestAccessibility()
+                Permissions.openSettings(pane: .accessibility)
+            }
+            row("Input Monitoring", granted: inputMonitoringGranted, pane: .inputMonitoring) {
+                Permissions.requestInputMonitoring()
+                Permissions.openSettings(pane: .inputMonitoring)
+            }
+        } header: {
+            Text("Permissions")
+        } footer: {
+            Text("Managed in System Settings › Privacy & Security.")
+        }
+        .onAppear { refresh() }
+        .onReceive(pollTimer) { _ in refresh() }
+    }
+
+    private func refresh() {
+        micGranted = Permissions.microphoneGranted
+        accessibilityGranted = Permissions.accessibilityGranted
+        inputMonitoringGranted = Permissions.inputMonitoringGranted
+        controller.recheckPermissions()
+    }
+
+    private func row(_ title: String, granted: Bool, pane: Permissions.Pane,
+                     action: @escaping () -> Void) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: granted ? "checkmark.circle.fill" : "circle.dotted")
+                .foregroundStyle(granted ? Color.primary : Color.secondary)
+            Text(title)
+            Spacer()
+            if granted {
+                Text("Granted")
+                    .foregroundStyle(.secondary)
+            } else {
+                Button("Open Settings", action: action)
+                    .controlSize(.small)
+            }
+        }
     }
 }
 

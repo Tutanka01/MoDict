@@ -76,10 +76,11 @@ final class HotkeyMonitor {
 
     @discardableResult
     func start() -> Bool {
-        guard CGPreflightListenEventAccess() else {
-            CGRequestListenEventAccess()   // surface the Input Monitoring prompt
-            return false
-        }
+        // Preflight only — never call CGRequestListenEventAccess() here: start()
+        // runs on every launch, and the prompting variant re-raises the system
+        // dialog each time. Prompting belongs behind an explicit user action
+        // (onboarding / settings button).
+        guard CGPreflightListenEventAccess() else { return false }
         if let tap, CGEvent.tapIsEnabled(tap: tap) { return true }
         stop()   // tear down any stale/disabled tap first
 

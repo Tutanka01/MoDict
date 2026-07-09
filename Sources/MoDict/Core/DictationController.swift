@@ -167,6 +167,7 @@ final class DictationController: ObservableObject {
     private var prepareTask: Task<Void, Never>?
     private var transcriptionTask: Task<Void, Never>?
     private var hideTask: Task<Void, Never>?
+    private var workspaceObserver: NSObjectProtocol?
 
     /// Recordings shorter than this are treated as accidental and dropped.
     private static let minimumUtteranceSeconds: TimeInterval = 0.35
@@ -211,6 +212,38 @@ final class DictationController: ObservableObject {
         }
         microphone.warmUp()
         prepareEngine()
+        observePermissionChanges()
+    }
+
+    /// Re-reads TCC state and reconciles: re-arms the event tap once Input
+    /// Monitoring appears, clears permission issues that no longer apply. TCC has
+    /// no change notification, so without this a grant made in System Settings is
+    /// invisible until relaunch. Cheap (three preflight calls) — safe to call often.
+    func recheckPermissions() {
+        if Permissions.inputMonitoringGranted {
+            if hotkey.start(), userIssue == .inputMonitoringPermissionMissing {
+                userIssue = nil
+            }
+        }
+        if userIssue == .accessibilityPermissionMissing, Permissions.accessibilityGranted {
+            userIssue = nil
+        }
+        if userIssue == .microphonePermissionMissing, Permissions.microphoneGranted {
+            userIssue = nil
+        }
+    }
+
+    /// The user grants permissions in System Settings, then switches back — any
+    /// app activation is the moment to reconcile.
+    private func observePermissionChanges() {
+        guard workspaceObserver == nil else { return }
+        workspaceObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.recheckPermissions() }
+        }
     }
 
     func deactivate() {

@@ -17,12 +17,13 @@ final class OnboardingController {
         self.app = app
     }
 
-    /// True on first launch, whenever a required permission is missing, or when the
-    /// speech model has not been downloaded yet — i.e. the app isn't ready to dictate.
+    /// True on first launch or when the speech model has not been downloaded yet.
+    /// Deliberately NOT gated on permissions: a grant that disappears after setup
+    /// (TCC reset, re-signed build) is surfaced through the menu-bar status —
+    /// re-running the full flow on every launch would be hostile, and a permission
+    /// read can be transiently stale right after launch.
     static func isNeeded(settings: SettingsStore) -> Bool {
-        !settings.onboardingCompleted
-            || !Permissions.allGranted
-            || !FluidAudioEngine.modelsExistOnDisk()
+        !settings.onboardingCompleted || !FluidAudioEngine.modelsExistOnDisk()
     }
 
     func present() {
