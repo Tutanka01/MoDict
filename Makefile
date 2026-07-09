@@ -7,6 +7,14 @@
 #   make icon       render the app icon and produce AppIcon.icns
 #   make bundle     assemble build/MoDict.app from the compiled binary
 #   make sign       code-sign the bundle (stable identity, else ad-hoc + warning)
+#   make sign-adhoc force ad-hoc dev/CI signing (never a release)
+#   make diagnose-signature
+#                   inspect signature, entitlements and Gatekeeper posture
+#   make validate-release
+#                   fail unless the current app is Developer ID signed
+#   make developer-id
+#                   build a universal Developer ID signed app (not notarized yet)
+#   make notarize   submit the Developer ID build to notarytool and staple it
 #   make run        build, sign, and launch the app directly (dev)
 #   make clean      remove .build and build
 #
@@ -21,8 +29,16 @@ BUILD     ?= 1
 # Stable signing identity. Create it once with ./scripts/dev-cert.sh so macOS
 # does not re-prompt for Microphone / Accessibility / Input Monitoring on every
 # rebuild. Override on the command line, e.g. `make sign IDENTITY="Developer ID
-# Application: …"`, or `IDENTITY=-` to force an ad-hoc signature (CI).
+# Application: …"`, or `IDENTITY=-` to force an ad-hoc signature (CI/dev only).
 IDENTITY  ?= MoDict Dev
+
+# Release/notarization knobs. Prefer a notarytool keychain profile:
+#   xcrun notarytool store-credentials modict-notary --apple-id ... --team-id ...
+# Then run:
+#   make developer-id IDENTITY="Developer ID Application: Example (TEAMID)"
+#   make notarize NOTARY_PROFILE=modict-notary
+NOTARY_PROFILE ?=
+NOTARY_TIMEOUT ?= 30m
 
 # Extra flags passed to `swift build`. `make universal` re-invokes make with the
 # cross-arch flags so bundle/sign are reused without a second arm64 build.
@@ -42,11 +58,18 @@ ICON_SRC := Support/generate-icon.swift
 ICON_PNG := $(BUILD_DIR)/Icon-1024.png
 ICONSET  := $(BUILD_DIR)/AppIcon.iconset
 ICNS     := $(BUILD_DIR)/AppIcon.icns
+RELEASE_ZIP := $(BUILD_DIR)/$(APP_NAME)-$(VERSION)-$(BUILD).zip
 
 ENTITLEMENTS := Support/MoDict.entitlements
 PLIST_IN     := Support/Info.plist.in
+SIGNATURE_DIAGNOSTICS := scripts/signature-diagnostics.sh
 
-.PHONY: all build universal icon bundle sign run clean
+# Guard rails for recursive release targets. Normal dev builds may fall back to
+# ad-hoc with loud warnings; release targets set ALLOW_ADHOC=0 and fail closed.
+ALLOW_ADHOC ?= 1
+REQUIRE_DEVELOPER_ID ?= 0
+
+.PHONY: all build universal icon bundle sign sign-adhoc diagnose-signature validate-release validate-notarized-release developer-id notarize run clean
 .DEFAULT_GOAL := all
 
 all: sign
@@ -94,19 +117,81 @@ bundle: build icon
 
 sign: bundle
 	@if [ "$(IDENTITY)" = "-" ]; then \
-		echo "Signing ad-hoc."; \
-		codesign --force --deep --options runtime --entitlements "$(ENTITLEMENTS)" --sign - "$(APP)"; \
+		if [ "$(ALLOW_ADHOC)" != "1" ]; then \
+			echo "error: ad-hoc signing was requested but ALLOW_ADHOC=0."; \
+			echo "error: pre-prod/release builds must use Developer ID Application and notarization."; \
+			exit 2; \
+		fi; \
+		echo "Signing ad-hoc (DEV/CI ONLY; never use as pre-prod or release)."; \
+		codesign --force --deep --options runtime --generate-entitlement-der --entitlements "$(ENTITLEMENTS)" --sign - "$(APP)"; \
+	elif [ "$(REQUIRE_DEVELOPER_ID)" = "1" ] && ! printf '%s\n' "$(IDENTITY)" | grep -q '^Developer ID Application:'; then \
+		echo "error: release signing requires IDENTITY=\"Developer ID Application: ...\"."; \
+		echo "error: current identity: $(IDENTITY)"; \
+		exit 2; \
 	elif security find-identity -v -p codesigning 2>/dev/null | grep -qF "$(IDENTITY)"; then \
 		echo "Signing with identity: $(IDENTITY)"; \
-		codesign --force --deep --options runtime --entitlements "$(ENTITLEMENTS)" --sign "$(IDENTITY)" "$(APP)"; \
+		TIMESTAMP_FLAG=""; \
+		case "$(IDENTITY)" in Developer\ ID\ Application:*) TIMESTAMP_FLAG="--timestamp";; esac; \
+		codesign --force --deep --options runtime --generate-entitlement-der --entitlements "$(ENTITLEMENTS)" $$TIMESTAMP_FLAG --sign "$(IDENTITY)" "$(APP)"; \
 	else \
+		if [ "$(ALLOW_ADHOC)" != "1" ]; then \
+			echo "error: signing identity \"$(IDENTITY)\" not found."; \
+			echo "error: refusing ad-hoc fallback because ALLOW_ADHOC=0."; \
+			exit 2; \
+		fi; \
 		echo "warning: signing identity \"$(IDENTITY)\" not found; falling back to ad-hoc."; \
 		echo "warning: an ad-hoc signature changes on every rebuild, so macOS re-requests"; \
 		echo "warning: Microphone, Accessibility and Input Monitoring each time you build."; \
+		echo "warning: this build is DEV/CI ONLY and must not be shipped or treated as pre-prod."; \
 		echo "warning: run ./scripts/dev-cert.sh once to create a stable \"MoDict Dev\" identity."; \
-		codesign --force --deep --options runtime --entitlements "$(ENTITLEMENTS)" --sign - "$(APP)"; \
+		echo "warning: run make developer-id IDENTITY=\"Developer ID Application: ...\" for release signing."; \
+		codesign --force --deep --options runtime --generate-entitlement-der --entitlements "$(ENTITLEMENTS)" --sign - "$(APP)"; \
 	fi
-	codesign --verify --verbose "$(APP)"
+	codesign --verify --strict --deep --verbose "$(APP)"
+	@echo "Signed $(APP). Run 'make diagnose-signature' to inspect the release posture."
+
+sign-adhoc:
+	$(MAKE) sign IDENTITY=- ALLOW_ADHOC=1
+
+diagnose-signature:
+	"$(SIGNATURE_DIAGNOSTICS)" "$(APP)"
+
+validate-release:
+	"$(SIGNATURE_DIAGNOSTICS)" --release "$(APP)"
+
+validate-notarized-release: validate-release
+	xcrun stapler validate "$(APP)"
+	spctl --assess --type execute --verbose=4 "$(APP)"
+	@echo "Notarization ticket and Gatekeeper assessment are valid."
+
+developer-id:
+	@if [ "$(IDENTITY)" = "MoDict Dev" ]; then \
+		echo "error: set a real Developer ID identity, for example:"; \
+		echo "error:   make developer-id IDENTITY=\"Developer ID Application: Example (TEAMID)\""; \
+		exit 2; \
+	fi
+	@if [ "$(IDENTITY)" = "Developer ID Application:" ]; then \
+		echo "error: pass the full Developer ID identity, not only the prefix."; \
+		exit 2; \
+	fi
+	$(MAKE) sign SWIFT_FLAGS="--arch arm64 --arch x86_64" BINARY=$(UNIVERSAL_BIN) ALLOW_ADHOC=0 REQUIRE_DEVELOPER_ID=1
+	$(MAKE) validate-release
+	@echo "Developer ID signature is valid, but the app is not distributable until notarized."
+	@echo "Next: make notarize NOTARY_PROFILE=<notarytool-keychain-profile>"
+
+notarize: validate-release
+	@if [ -z "$(NOTARY_PROFILE)" ]; then \
+		echo "error: set NOTARY_PROFILE=<notarytool keychain profile>."; \
+		echo "error: create one with:"; \
+		echo "error:   xcrun notarytool store-credentials modict-notary --apple-id <apple-id> --team-id <team-id>"; \
+		exit 2; \
+	fi
+	rm -f "$(RELEASE_ZIP)"
+	ditto -c -k --keepParent "$(APP)" "$(RELEASE_ZIP)"
+	xcrun notarytool submit "$(RELEASE_ZIP)" --keychain-profile "$(NOTARY_PROFILE)" --wait --timeout "$(NOTARY_TIMEOUT)"
+	xcrun stapler staple "$(APP)"
+	$(MAKE) validate-notarized-release
+	@echo "Notarized release artifact: $(APP)"
 
 # Launch the binary directly rather than via `open`. Going through LaunchServices
 # races TCC on freshly signed builds and can strip the permission grant; a direct

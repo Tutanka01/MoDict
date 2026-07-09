@@ -3,8 +3,9 @@ import Combine
 
 /// Five-step first-run flow: welcome → microphone → keyboard permissions → speech
 /// model → live try-it. Steps advance automatically the moment their condition is
-/// met (permission granted, model ready) and are otherwise skippable. The view owns
-/// the flow; `onFinish` hands window dismissal back to `OnboardingController`.
+/// met (permission granted, model ready). Required permissions and the model are
+/// never skippable; `onFinish` hands window dismissal back to
+/// `OnboardingController`.
 struct OnboardingView: View {
 
     private let onFinish: () -> Void
@@ -45,10 +46,10 @@ struct OnboardingView: View {
         .onAppear { refreshPermissions() }
         .onReceive(pollTimer) { _ in refreshPermissions() }
         .onChange(of: step) { _, newStep in handleStepChange(to: newStep) }
-        .onChange(of: controller.modelState) { _, _ in maybeAutoAdvance() }
+        .onChange(of: controller.modelState) { _, _ in handleReadinessChange() }
         .onChange(of: controller.lastInsertedText) { _, newValue in handleInsertion(newValue) }
         .onKeyPress(.leftArrow) { goBack(); return .handled }
-        .onKeyPress(.rightArrow) { skipForward(); return .handled }
+        .onKeyPress(.rightArrow) { continueIfReady(); return .handled }
     }
 
     // MARK: Chrome
@@ -66,12 +67,6 @@ struct OnboardingView: View {
                 .help("Back")
             }
             Spacer()
-            if canSkip {
-                Button("Skip", action: skipForward)
-                    .buttonStyle(.plain)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-            }
         }
         .frame(height: 44)
         .padding(.horizontal, 22)
@@ -119,11 +114,29 @@ struct OnboardingView: View {
         case 3:
             OnboardingModelStep(state: controller.modelState)
         default:
-            OnboardingTryItStep(text: $tryText, succeeded: tryItSucceeded)
+            OnboardingTryItStep(text: $tryText, succeeded: tryItSucceeded, ready: allRequirementsReady)
         }
     }
 
-    private var canSkip: Bool { (1...3).contains(step) }
+    private var keyboardPermissionsReady: Bool {
+        accessibilityGranted && inputMonitoringGranted
+    }
+
+    private var modelReady: Bool {
+        if case .ready = controller.modelState { return true }
+        return false
+    }
+
+    private var allRequirementsReady: Bool {
+        micGranted && keyboardPermissionsReady && modelReady
+    }
+
+    private var firstBlockingStep: Int? {
+        if !micGranted { return 1 }
+        if !keyboardPermissionsReady { return 2 }
+        if !modelReady { return 3 }
+        return nil
+    }
 
     // MARK: Primary action per step
 
@@ -134,20 +147,36 @@ struct OnboardingView: View {
         case 1:
             if micGranted {
                 return OnboardingPrimaryConfig(title: "Continue", enabled: true, action: advance)
+            } else if micRequestInFlight {
+                return OnboardingPrimaryConfig(title: "Waiting for macOS…", enabled: false) {}
             } else if Permissions.microphoneDenied {
-                return OnboardingPrimaryConfig(title: "Open Settings", enabled: true) {
+                return OnboardingPrimaryConfig(title: "Open Microphone Settings", enabled: true) {
                     Permissions.openSettings(pane: .microphone)
                 }
             } else {
                 return OnboardingPrimaryConfig(title: "Allow microphone", enabled: !micRequestInFlight, action: requestMicrophone)
             }
         case 2:
-            return OnboardingPrimaryConfig(title: "Continue", enabled: true, action: advance)
+            if keyboardPermissionsReady {
+                return OnboardingPrimaryConfig(title: "Continue", enabled: true, action: advance)
+            } else {
+                return OnboardingPrimaryConfig(title: keyboardPermissionStatusTitle, enabled: false) {}
+            }
         case 3:
             return modelPrimaryConfig
         default:
-            return OnboardingPrimaryConfig(title: "Start dictating", enabled: true, action: finish)
+            if allRequirementsReady {
+                return OnboardingPrimaryConfig(title: "Start dictating", enabled: true, action: finish)
+            } else {
+                return OnboardingPrimaryConfig(title: "Review setup", enabled: true, action: moveToFirstBlockingStep)
+            }
         }
+    }
+
+    private var keyboardPermissionStatusTitle: String {
+        if !accessibilityGranted && !inputMonitoringGranted { return "Waiting for both permissions" }
+        if !accessibilityGranted { return "Waiting for Accessibility" }
+        return "Waiting for Input Monitoring"
     }
 
     private var modelPrimaryConfig: OnboardingPrimaryConfig {
@@ -157,7 +186,7 @@ struct OnboardingView: View {
         case .downloading(let progress):
             return OnboardingPrimaryConfig(title: onboardingPhaseLabel(progress.phase), enabled: false) {}
         case .failed:
-            return OnboardingPrimaryConfig(title: "Retry", enabled: true) { controller.prepareEngine() }
+            return OnboardingPrimaryConfig(title: "Retry download", enabled: true) { controller.prepareEngine() }
         case .needsDownload, .unknown:
             return OnboardingPrimaryConfig(title: "Download model", enabled: true) { controller.prepareEngine() }
         }
@@ -175,11 +204,26 @@ struct OnboardingView: View {
         withAnimation(Theme.stateSpring) { step -= 1 }
     }
 
-    private func skipForward() {
-        if step == 0 || canSkip { advance() }
+    private func continueIfReady() {
+        switch step {
+        case 0:
+            advance()
+        case 1...3:
+            guard conditionMet(for: step) else { return }
+            advance()
+        case 4:
+            finish()
+        default:
+            break
+        }
     }
 
     private func finish() {
+        refreshPermissions()
+        guard allRequirementsReady else {
+            moveToFirstBlockingStep()
+            return
+        }
         settings.onboardingCompleted = true
         onFinish()
     }
@@ -195,8 +239,12 @@ struct OnboardingView: View {
             maybeAutoAdvance()
         case 4:
             // The pipeline must be live for the trial dictation to insert into the editor.
+            guard allRequirementsReady else {
+                moveToFirstBlockingStep()
+                return
+            }
             controller.activate()
-            tryItSucceeded = controller.lastInsertedText != nil
+            tryItSucceeded = false
         default:
             maybeAutoAdvance()
         }
@@ -208,21 +256,36 @@ struct OnboardingView: View {
         micGranted = Permissions.microphoneGranted
         accessibilityGranted = Permissions.accessibilityGranted
         inputMonitoringGranted = Permissions.inputMonitoringGranted
-        maybeAutoAdvance()
+        handleReadinessChange()
     }
 
     private func conditionMet(for step: Int) -> Bool {
         switch step {
         case 1: return micGranted
-        case 2: return accessibilityGranted && inputMonitoringGranted
-        case 3: return controller.modelState == .ready
+        case 2: return keyboardPermissionsReady
+        case 3: return modelReady
         default: return false
         }
+    }
+
+    private func handleReadinessChange() {
+        if step == 4 && !allRequirementsReady {
+            moveToFirstBlockingStep()
+            return
+        }
+        maybeAutoAdvance()
     }
 
     private func maybeAutoAdvance() {
         guard conditionMet(for: step) else { return }
         scheduleAutoAdvance(from: step)
+    }
+
+    private func moveToFirstBlockingStep() {
+        guard let blockingStep = firstBlockingStep else { return }
+        autoAdvancePending = nil
+        guard blockingStep != step else { return }
+        withAnimation(Theme.stateSpring) { step = blockingStep }
     }
 
     /// Wait a beat so the just-granted checkmark is visible, then advance if the
@@ -444,12 +507,14 @@ private struct OnboardingMicrophoneStep: View {
         OnboardingStepScaffold(
             symbol: granted ? "checkmark.circle.fill" : "mic",
             title: "Microphone",
-            message: "MoDict listens only while you hold the key. Audio is transcribed on your Mac and never leaves it."
+            message: granted
+                ? "Microphone access is ready. MoDict listens only while you hold the key."
+                : "Microphone access is required before MoDict can record. Audio is transcribed on your Mac and never leaves it."
         ) {
             OnboardingStatusPill(
                 granted: granted,
-                grantedText: "Microphone access granted",
-                pendingText: "Microphone access needed"
+                grantedText: "Microphone ready",
+                pendingText: "Microphone required"
             )
         }
     }
@@ -465,20 +530,22 @@ private struct OnboardingPermissionsStep: View {
 
     var body: some View {
         OnboardingStepScaffold(
-            symbol: "keyboard",
+            symbol: ready ? "checkmark.circle.fill" : "keyboard",
             title: "Keyboard access",
-            message: "To detect the right ⌘ key and type text into your apps. MoDict never logs your keystrokes."
+            message: ready
+                ? "Keyboard access is ready. MoDict can detect the right ⌘ key and type into your apps."
+                : "Both permissions are required before MoDict can detect the right ⌘ key and type into your apps."
         ) {
             VStack(spacing: 12) {
                 OnboardingPermissionCard(
                     title: "Accessibility",
-                    detail: "Types your words into the focused app.",
+                    detail: "Required to type your words into the focused app.",
                     granted: accessibilityGranted,
                     action: onOpenAccessibility
                 )
                 OnboardingPermissionCard(
                     title: "Input Monitoring",
-                    detail: "Detects the right ⌘ key.",
+                    detail: "Required to detect the right ⌘ key.",
                     granted: inputMonitoringGranted,
                     action: onOpenInputMonitoring
                 )
@@ -486,6 +553,10 @@ private struct OnboardingPermissionsStep: View {
             .frame(maxWidth: 380)
             .padding(.top, 4)
         }
+    }
+
+    private var ready: Bool {
+        accessibilityGranted && inputMonitoringGranted
     }
 }
 
@@ -507,7 +578,7 @@ private struct OnboardingPermissionCard: View {
             }
             Spacer(minLength: 8)
             if granted {
-                Text("Granted")
+                Text("Ready")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             } else {
@@ -530,7 +601,9 @@ private struct OnboardingModelStep: View {
         OnboardingStepScaffold(
             symbol: isReady ? "checkmark.circle.fill" : "arrow.down.circle",
             title: "Speech model",
-            message: "Parakeet v3 · 25 languages · runs on the Neural Engine · ~480 MB."
+            message: isReady
+                ? "Parakeet v3 is ready for on-device dictation."
+                : "The speech model is required before dictation can start. Parakeet v3 · 25 languages · ~480 MB."
         ) {
             statusView
                 .frame(height: 60)
@@ -557,10 +630,10 @@ private struct OnboardingModelStep: View {
                     .monospacedDigit()
             }
         case .ready:
-            OnboardingStatusPill(granted: true, grantedText: "Model ready", pendingText: "")
+            OnboardingStatusPill(granted: true, grantedText: "Speech model ready", pendingText: "")
         case .failed(let message):
             VStack(spacing: 6) {
-                Label("Download failed", systemImage: "exclamationmark.triangle")
+                Label("Model not ready", systemImage: "exclamationmark.triangle")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(Color.red)
                 Text(message)
@@ -571,7 +644,7 @@ private struct OnboardingModelStep: View {
                     .frame(maxWidth: 300)
             }
         case .needsDownload, .unknown:
-            Text("One-time download. You can keep using your Mac while it finishes.")
+            Text("Required one-time download. Setup stays locked until the model is ready.")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -594,10 +667,23 @@ private struct OnboardingModelStep: View {
 private struct OnboardingTryItStep: View {
     @Binding var text: String
     let succeeded: Bool
+    let ready: Bool
 
     var body: some View {
         VStack(spacing: 20) {
-            if succeeded {
+            if !ready {
+                OnboardingIconBadge(symbol: "exclamationmark.circle")
+                VStack(spacing: 10) {
+                    Text("Setup incomplete")
+                        .font(Theme.onboardingTitleFont)
+                        .tracking(-0.5)
+                    Text("MoDict needs microphone access, keyboard access, and the speech model before dictation can start.")
+                        .font(Theme.onboardingBodyFont)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 360)
+                }
+            } else if succeeded {
                 OnboardingSuccessBadge()
                 VStack(spacing: 10) {
                     Text("That's it.")
@@ -620,7 +706,9 @@ private struct OnboardingTryItStep: View {
                         .frame(maxWidth: 360)
                 }
             }
-            OnboardingTryEditor(text: $text)
+            if ready {
+                OnboardingTryEditor(text: $text)
+            }
         }
         .padding(.horizontal, 44)
     }

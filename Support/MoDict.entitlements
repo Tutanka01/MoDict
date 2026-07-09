@@ -18,7 +18,8 @@
       On macOS 26 a Hardened Runtime build WITHOUT the audio-input entitlement
       never receives a Microphone entry in Privacy settings and the permission
       prompt never fires, so both keys below are required when signing with
-      --options runtime.
+      the hardened runtime option ("codesign ... =options runtime", spelled with
+      dashes; XML comments cannot contain a double dash).
     -->
     <key>com.apple.security.device.audio-input</key>
     <true/>

@@ -7,6 +7,8 @@ two design documents before you write anything:
 - [Docs/ARCHITECTURE.md](Docs/ARCHITECTURE.md) — modules, the state machine, and the
   **frozen** public contracts.
 - [Docs/DESIGN.md](Docs/DESIGN.md) — the visual system, motion, and micro-copy voice.
+- [Docs/QA.md](Docs/QA.md) — the pre-prod P1 checklist for permissions, signing,
+  insertion, devices, sleep/wake, clipboard, model readiness, and privacy.
 
 ## Setup
 
@@ -43,18 +45,24 @@ app's code-signing identity. An **ad-hoc** signature changes its designated requ
 every rebuild, so macOS re-prompts for all three permissions each time you build. For a
 smooth dev loop, create a stable self-signed identity **once**:
 
+```sh
+./scripts/dev-cert.sh
+```
+
+If the script cannot create it automatically, do it by hand:
+
 1. Open **Keychain Access → Certificate Assistant → Create a Certificate**.
-2. Name it `MoDict Self-Signed`, Identity Type **Self-Signed Root**, Certificate Type
+2. Name it `MoDict Dev`, Identity Type **Self-Signed Root**, Certificate Type
    **Code Signing** (check "Let me override defaults").
 3. Mark it **Always Trust** for code signing.
 4. Confirm it is visible:
 
    ```sh
-   security find-identity -v -p codesigning   # should list "MoDict Self-Signed"
+   security find-identity -v -p codesigning   # should list "MoDict Dev"
    ```
 
 `make` signs with that identity by default, so permissions now persist across rebuilds.
-Without the certificate, fall back to ad-hoc (`make sign-adhoc`) and expect to re-grant
+Without the certificate, fall back to ad-hoc (`make sign IDENTITY=-`) and expect to re-grant
 permissions after each build.
 
 MoDict is intentionally **not** sandboxed — posting synthetic key events into other apps
@@ -128,6 +136,8 @@ If your change touches packaging, also confirm the bundle is universal:
 swift build -c release --arch arm64 --arch x86_64
 lipo -info build/MoDict.app/Contents/MacOS/MoDict   # -> x86_64 arm64
 ```
+
+Before a pre-prod build, run the broader P1 pass in [Docs/QA.md](Docs/QA.md).
 
 ## Pull requests
 

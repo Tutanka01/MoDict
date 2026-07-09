@@ -32,7 +32,7 @@ struct MenuBarView: View {
 
             Divider().padding(.horizontal, 12)
 
-            MenuBar.Footer(settings: settings)
+            MenuBar.Footer(settings: settings, controller: controller)
         }
         .frame(width: 300)
     }
@@ -40,6 +40,7 @@ struct MenuBarView: View {
     private var status: MenuBar.Status {
         MenuBar.Status.make(phase: controller.phase,
                             modelState: controller.modelState,
+                            userIssue: controller.userIssue,
                             enabled: settings.dictationEnabled)
     }
 
@@ -98,6 +99,7 @@ enum MenuBar {
     struct Status {
         var text: String
         var symbol: String
+        var detail: String?
         var isRecording = false
         var isError = false
         var showRetry = false
@@ -105,6 +107,7 @@ enum MenuBar {
 
         static func make(phase: DictationController.Phase,
                          modelState: DictationController.ModelState,
+                         userIssue: DictationController.UserIssue?,
                          enabled: Bool) -> Status {
             switch phase {
             case .recording:
@@ -119,6 +122,13 @@ enum MenuBar {
                 return Status(text: "Dictation off", symbol: "pause.circle")
             }
 
+            if case .ready = modelState, let userIssue {
+                return Status(text: userIssue.statusTitle,
+                              symbol: userIssue.symbol,
+                              detail: userIssue.statusDetail,
+                              isError: true)
+            }
+
             switch modelState {
             case .ready:
                 return Status(text: "Ready · hold right ⌘ to dictate", symbol: "waveform")
@@ -126,26 +136,34 @@ enum MenuBar {
                 switch progress.phase {
                 case .downloading:
                     let pct = Int((progress.fraction * 100).rounded())
-                    return Status(text: "Downloading model… \(pct)%",
+                    return Status(text: "Downloading speech model… \(pct)%",
                                   symbol: "arrow.down.circle",
                                   fraction: min(max(progress.fraction, 0), 1))
                 case .checking:
-                    return Status(text: "Checking model…", symbol: "arrow.down.circle")
+                    return Status(text: "Checking speech model…", symbol: "arrow.down.circle")
                 case .compiling:
-                    return Status(text: "Compiling model…", symbol: "arrow.down.circle")
+                    return Status(text: "Preparing speech model…", symbol: "arrow.down.circle")
                 case .ready:
                     return Status(text: "Ready · hold right ⌘ to dictate", symbol: "waveform")
                 }
             case .needsDownload:
-                return Status(text: "Preparing model…", symbol: "arrow.down.circle")
+                return Status(text: "Speech model needs download",
+                              symbol: "arrow.down.circle",
+                              detail: "Keep MoDict open while the local model downloads.")
             case .unknown:
-                return Status(text: "Preparing…", symbol: "ellipsis.circle")
-            case .failed:
-                return Status(text: "Model download failed",
+                return Status(text: "Starting speech model…", symbol: "ellipsis.circle")
+            case .failed(let message):
+                return Status(text: "Speech model setup failed",
                               symbol: "exclamationmark.triangle",
+                              detail: modelFailureDetail(message),
                               isError: true,
                               showRetry: true)
             }
+        }
+
+        private static func modelFailureDetail(_ message: String) -> String {
+            let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? "Retry from the menu." : trimmed
         }
     }
 
@@ -169,6 +187,13 @@ enum MenuBar {
                             .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(.secondary)
                     }
+                }
+                if let detail = status.detail {
+                    Text(detail)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 if let fraction = status.fraction {
                     ProgressView(value: fraction)
@@ -275,6 +300,7 @@ enum MenuBar {
 
     struct Footer: View {
         @ObservedObject var settings: SettingsStore
+        @ObservedObject var controller: DictationController
 
         var body: some View {
             HStack(spacing: 16) {
@@ -289,7 +315,7 @@ enum MenuBar {
                 })
 
                 Button {
-                    settings.dictationEnabled.toggle()
+                    controller.setDictationEnabled(!settings.dictationEnabled)
                 } label: {
                     Image(systemName: "power")
                 }

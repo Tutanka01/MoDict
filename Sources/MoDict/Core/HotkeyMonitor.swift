@@ -5,7 +5,7 @@ import CoreGraphics
 ///
 /// The tap listens for modifier changes (right ⌘ press/release) and key-downs
 /// (combo detection + Esc-to-cancel). It only ever *swallows* one event: Esc
-/// while a recording is active. Right ⌘ is a bare modifier and is never
+/// while dictation can still be cancelled. Right ⌘ is a bare modifier and is never
 /// swallowed, so combos like ⌘C keep working.
 ///
 /// The `CGEventTapCallBack` is a C function pointer and cannot capture context;
@@ -25,9 +25,10 @@ final class HotkeyMonitor {
     }
 
     var mode: Mode = .hybrid
-    var onBegin: (() -> Void)?
+    var onBegin: (() -> Bool)?
     var onEnd: (() -> Void)?
     var onCancel: (() -> Void)?
+    var onPermissionLost: (() -> Void)?
 
     /// True between `onBegin` and the matching `onEnd`/`onCancel`.
     private(set) var isSessionActive = false
@@ -68,8 +69,8 @@ final class HotkeyMonitor {
     private var pressedAt: TimeInterval = 0
     /// `systemUptime` of the last session start (cooldown gate).
     private var lastSessionStart: TimeInterval = -.greatestFiniteMagnitude
-    /// Set by the controller; Esc is only swallowed while this is true.
-    private var recordingActive = false
+    /// Set by the controller; Esc is swallowed while recording or transcribing.
+    private var cancellationActive = false
 
     // MARK: Lifecycle
 
@@ -136,13 +137,13 @@ final class HotkeyMonitor {
     }
 
     func setRecordingActive(_ active: Bool) {
-        recordingActive = active
+        cancellationActive = active
     }
 
     // MARK: Event handling
 
     /// Runs inside the tap callback on the main actor. Returns `nil` only to
-    /// swallow Esc while recording; every other event passes through untouched.
+    /// swallow Esc while dictation is cancellable; every other event passes through untouched.
     private func process(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
         // Re-arm: the system disables the tap on timeout or certain input.
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
@@ -165,7 +166,7 @@ final class HotkeyMonitor {
             return Unmanaged.passUnretained(event)   // never swallow a modifier
 
         case .keyDown:
-            if keyCode == Self.escapeKeyCode, recordingActive {
+            if keyCode == Self.escapeKeyCode, cancellationActive {
                 cancelSession()
                 return nil                            // the one and only swallowed event
             }
@@ -236,7 +237,7 @@ final class HotkeyMonitor {
 
     private func beginSession() {
         isSessionActive = true
-        fire(onBegin)
+        fireBegin()
     }
 
     private func endSession() {
@@ -279,14 +280,39 @@ final class HotkeyMonitor {
         accidentalStart = false
         pressStartedSession = false
         isSessionActive = false
-        recordingActive = false
+        cancellationActive = false
     }
 
     private func checkTapHealth() {
+        guard CGPreflightListenEventAccess() else {
+            resetState()
+            fire(onPermissionLost)
+            return
+        }
         guard let tap else { return }
         if !CGEvent.tapIsEnabled(tap: tap) {
             CGEvent.tapEnable(tap: tap, enable: true)
             resetPressed()
+        }
+    }
+
+    private func rejectBeginIfStillOptimistic() {
+        guard isSessionActive else { return }
+        isSessionActive = false
+        handsFree = false
+        accidentalStart = false
+        pressStartedSession = false
+    }
+
+    private func fireBegin() {
+        guard let onBegin else { return }
+        DispatchQueue.main.async { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                if !onBegin() {
+                    self.rejectBeginIfStillOptimistic()
+                }
+            }
         }
     }
 

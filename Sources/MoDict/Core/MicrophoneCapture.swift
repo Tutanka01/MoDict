@@ -22,6 +22,8 @@ final class MicrophoneCapture: @unchecked Sendable {
 
     enum CaptureError: Error {
         case noInputDevice
+        case selectedDeviceUnavailable
+        case deviceSelectionFailed
         case invalidFormat
         case engineStartFailed
     }
@@ -29,6 +31,8 @@ final class MicrophoneCapture: @unchecked Sendable {
     /// Visible level 0…1, called on the audio thread at buffer rate. The caller is
     /// responsible for hopping to the main thread before touching UI.
     var onLevel: (@Sendable (Float) -> Void)?
+    /// Called when capture stops unexpectedly after a successful start.
+    var onFatalInterruption: (@Sendable (CaptureError) -> Void)?
 
     private static let targetSampleRate: Double = 16_000
 
@@ -120,8 +124,11 @@ final class MicrophoneCapture: @unchecked Sendable {
 
     private func openEngine(deviceUID: String?) throws {
         let input = engine.inputNode
-        if let uid = deviceUID, let deviceID = Self.deviceID(forUID: uid) {
-            Self.setInputDevice(deviceID, on: input)
+        if let uid = deviceUID {
+            guard let deviceID = Self.deviceID(forUID: uid) else {
+                throw CaptureError.selectedDeviceUnavailable
+            }
+            try Self.setInputDevice(deviceID, on: input)
         }
 
         // Tap in the hardware's native format (often 48 kHz stereo). Installing a
@@ -131,7 +138,9 @@ final class MicrophoneCapture: @unchecked Sendable {
             throw CaptureError.invalidFormat
         }
 
-        let conv = AVAudioConverter(from: inputFormat, to: targetFormat)
+        guard let conv = AVAudioConverter(from: inputFormat, to: targetFormat) else {
+            throw CaptureError.invalidFormat
+        }
         lock.lock()
         converter = conv
         lock.unlock()
@@ -283,6 +292,7 @@ final class MicrophoneCapture: @unchecked Sendable {
             lock.lock()
             isRecording = false
             lock.unlock()
+            notifyFatal(.noInputDevice)
             return
         }
 
@@ -293,7 +303,12 @@ final class MicrophoneCapture: @unchecked Sendable {
             isRecording = false
             converter = nil
             lock.unlock()
+            notifyFatal((error as? CaptureError) ?? .invalidFormat)
         }
+    }
+
+    private func notifyFatal(_ error: CaptureError) {
+        onFatalInterruption?(error)
     }
 
     // MARK: - Device presence
@@ -345,16 +360,17 @@ final class MicrophoneCapture: @unchecked Sendable {
         allDeviceIDs().first { deviceUID(for: $0) == uid }
     }
 
-    private static func setInputDevice(_ id: AudioDeviceID, on node: AVAudioInputNode) {
-        guard let unit = node.audioUnit else { return }
+    private static func setInputDevice(_ id: AudioDeviceID, on node: AVAudioInputNode) throws {
+        guard let unit = node.audioUnit else { throw CaptureError.deviceSelectionFailed }
         var device = id
-        AudioUnitSetProperty(
+        let status = AudioUnitSetProperty(
             unit,
             kAudioOutputUnitProperty_CurrentDevice,
             kAudioUnitScope_Global,
             0,
             &device,
             UInt32(MemoryLayout<AudioDeviceID>.size))
+        guard status == noErr else { throw CaptureError.deviceSelectionFailed }
     }
 
     private static func hasInputChannels(_ id: AudioDeviceID) -> Bool {

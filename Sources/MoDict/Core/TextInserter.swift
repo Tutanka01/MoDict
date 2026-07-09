@@ -4,11 +4,17 @@ import Carbon            // IsSecureEventInputEnabled
 import CoreGraphics
 
 /// Result of an insertion attempt, consumed by `DictationController`.
-enum InsertOutcome: Sendable {
+enum InsertOutcome: Equatable, Sendable {
+    enum FailureReason: Equatable, Sendable {
+        case pasteboardWriteFailed
+        case pasteShortcutFailed
+        case cancelled
+    }
+
     case inserted
     case secureInputBlocked
     case noAccessibilityPermission
-    case failed
+    case failed(FailureReason)
 }
 
 /// Inserts transcribed text at the cursor of whatever app is focused.
@@ -49,6 +55,7 @@ final class TextInserter {
 
     func insert(_ text: String) async -> InsertOutcome {
         guard !text.isEmpty else { return .inserted }
+        guard !Task.isCancelled else { return .failed(.cancelled) }
 
         // Secure input (password fields, Terminal's Secure Keyboard Entry) blocks
         // event taps, synthetic events and AX alike — bail before a silent failure.
@@ -62,16 +69,26 @@ final class TextInserter {
         let snapshot = restore ? snapshotItems(pasteboard) : []
         let sessionID = UUID().uuidString
 
+        guard !Task.isCancelled else { return .failed(.cancelled) }
         guard writeText(text, sessionID: sessionID, restore: restore, to: pasteboard) else {
-            return .failed
+            return .failed(.pasteboardWriteFailed)
         }
 
         try? await Task.sleep(nanoseconds: Self.prePasteDelay)
+        guard !Task.isCancelled else {
+            restoreIfStillOurs(text: text, sessionID: sessionID, snapshot: snapshot, to: pasteboard)
+            return .failed(.cancelled)
+        }
 
-        guard await postCommandV() else { return .failed }
+        guard await postCommandV() else { return .failed(.pasteShortcutFailed) }
+        guard !Task.isCancelled else { return .failed(.cancelled) }
 
         if restore {
             try? await Task.sleep(nanoseconds: Self.clipboardRestoreDelay)
+            guard !Task.isCancelled else {
+                restoreIfStillOurs(text: text, sessionID: sessionID, snapshot: snapshot, to: pasteboard)
+                return .failed(.cancelled)
+            }
             restoreIfStillOurs(text: text, sessionID: sessionID, snapshot: snapshot, to: pasteboard)
         }
 

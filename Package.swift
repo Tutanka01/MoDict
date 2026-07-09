@@ -1,5 +1,35 @@
 // swift-tools-version: 6.0
+import Foundation
 import PackageDescription
+
+let developerDirectories = [
+    ProcessInfo.processInfo.environment["DEVELOPER_DIR"],
+    "/Applications/Xcode.app/Contents/Developer",
+    "/Library/Developer/CommandLineTools"
+].compactMap { $0 }
+
+let swiftTestingSupport = developerDirectories.compactMap { developerDirectory -> (frameworks: String, libraries: String)? in
+    let frameworks = "\(developerDirectory)/Library/Developer/Frameworks"
+    guard FileManager.default.fileExists(atPath: "\(frameworks)/Testing.framework") else { return nil }
+    return (frameworks, "\(developerDirectory)/Library/Developer/usr/lib")
+}.first
+
+let swiftTestingSwiftSettings: [SwiftSetting] = swiftTestingSupport.map { support in
+    [.unsafeFlags(["-F", support.frameworks], .when(platforms: [.macOS]))]
+} ?? []
+
+let swiftTestingLinkerSettings: [LinkerSetting] = swiftTestingSupport.map { support in
+    [
+        .unsafeFlags(
+            [
+                "-F", support.frameworks,
+                "-Xlinker", "-rpath", "-Xlinker", support.frameworks,
+                "-Xlinker", "-rpath", "-Xlinker", support.libraries
+            ],
+            .when(platforms: [.macOS])
+        )
+    ]
+} ?? []
 
 let package = Package(
     name: "MoDict",
@@ -22,6 +52,15 @@ let package = Package(
             swiftSettings: [
                 .swiftLanguageMode(.v5)
             ]
+        ),
+        .testTarget(
+            name: "MoDictTests",
+            dependencies: ["MoDict"],
+            path: "Tests/MoDictTests",
+            swiftSettings: [
+                .swiftLanguageMode(.v6)
+            ] + swiftTestingSwiftSettings,
+            linkerSettings: swiftTestingLinkerSettings
         )
     ]
 )
