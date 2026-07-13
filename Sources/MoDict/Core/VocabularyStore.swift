@@ -104,14 +104,19 @@ final class VocabularyStore: ObservableObject {
     }
 
     /// Any uppercase in the replacement means the user chose exact casing (use it
-    /// verbatim). An all-lowercase replacement adapts its first letter to the
-    /// matched occurrence, so a sentence-start match stays capitalized.
+    /// verbatim). An all-lowercase replacement adapts its first letter only to a
+    /// *capitalized* occurrence (sentence start); an ALL-CAPS occurrence is an
+    /// ASR artifact, not a casing choice, so the user's lowercase wins.
     private func adaptedReplacement(for rule: VocabularyRule, occurrence: String) -> String {
         let replacement = rule.replacement
         guard !replacement.isEmpty else { return "" }
         if replacement.contains(where: { $0.isUppercase }) { return replacement }
         if let first = occurrence.first, first.isUppercase {
-            return replacement.prefix(1).uppercased() + replacement.dropFirst()
+            let letters = occurrence.filter(\.isLetter)
+            let isAllCaps = letters.count > 1 && letters.allSatisfy(\.isUppercase)
+            if !isAllCaps {
+                return replacement.prefix(1).uppercased() + replacement.dropFirst()
+            }
         }
         return replacement
     }

@@ -13,8 +13,20 @@ enum TranscriptSanitizer {
     private static let maximumRepeatedPhraseWords = 128
 
     static func clean(_ text: String) -> String {
-        var words = text.split(whereSeparator: \Character.isWhitespace).map(String.init)
-        guard !words.isEmpty else { return "" }
+        let tokens = text.split(whereSeparator: \Character.isWhitespace).map(String.init)
+        guard !tokens.isEmpty else { return "" }
+
+        // Standalone punctuation ("recommence !", French spacing) rides with
+        // its preceding word: a repeated span differing only in trailing
+        // punctuation still collapses as one span instead of orphaning a "!".
+        var words: [String] = []
+        for token in tokens {
+            if normalized(token).isEmpty, !words.isEmpty {
+                words[words.count - 1] += " " + token
+            } else {
+                words.append(token)
+            }
+        }
         var normalizedWords = words.map(normalized)
 
         var start = 0
@@ -53,6 +65,6 @@ enum TranscriptSanitizer {
             options: [.caseInsensitive, .diacriticInsensitive],
             locale: Locale(identifier: "fr_FR")
         )
-        .trimmingCharacters(in: .punctuationCharacters.union(.symbols))
+        .trimmingCharacters(in: .punctuationCharacters.union(.symbols).union(.whitespaces))
     }
 }
