@@ -6,7 +6,10 @@ import ServiceManagement
 @MainActor
 final class SettingsStore: ObservableObject {
 
+    private static let nearPointerMigrationKey = "nearPointerHUDMigrationCompleted"
+
     enum HUDPosition: String, CaseIterable {
+        case nearPointer
         case bottomCenter
         case topCenter
     }
@@ -67,14 +70,23 @@ final class SettingsStore: ObservableObject {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        hotkeyMode = HotkeyMonitor.Mode(rawValue: defaults.string(forKey: "hotkeyMode") ?? "") ?? .hybrid
+        hotkeyMode = HotkeyMonitor.Mode(rawValue: defaults.string(forKey: "hotkeyMode") ?? "") ?? .pushToTalk
         dictationKey = DictationKey(rawValue: defaults.string(forKey: "dictationKey") ?? "") ?? .rightCommand
         playSounds = defaults.object(forKey: "playSounds") as? Bool ?? true
         hapticFeedback = defaults.object(forKey: "hapticFeedback") as? Bool ?? true
         restoreClipboard = defaults.object(forKey: "restoreClipboard") as? Bool ?? true
         languageHint = defaults.string(forKey: "languageHint") ?? "auto"
         inputDeviceUID = defaults.string(forKey: "inputDeviceUID") ?? ""
-        hudPosition = HUDPosition(rawValue: defaults.string(forKey: "hudPosition") ?? "") ?? .bottomCenter
+        if defaults.bool(forKey: Self.nearPointerMigrationKey) {
+            hudPosition = HUDPosition(rawValue: defaults.string(forKey: "hudPosition") ?? "") ?? .nearPointer
+        } else {
+            // The composition-card redesign replaces the old edge capsule. Move
+            // existing installations to the new near-pointer experience once;
+            // any position the user chooses afterwards remains respected.
+            hudPosition = .nearPointer
+            defaults.set(HUDPosition.nearPointer.rawValue, forKey: "hudPosition")
+            defaults.set(true, forKey: Self.nearPointerMigrationKey)
+        }
         keepMicWarm = defaults.object(forKey: "keepMicWarm") as? Bool ?? false
         onboardingCompleted = defaults.bool(forKey: "onboardingCompleted")
         launchAtLogin = SMAppService.mainApp.status == .enabled

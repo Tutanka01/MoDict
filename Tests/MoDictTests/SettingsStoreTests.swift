@@ -10,14 +10,14 @@ struct SettingsStoreTests {
         withEmptyDefaults { defaults in
             let store = SettingsStore(defaults: defaults)
 
-            #expect(store.hotkeyMode == .hybrid)
+            #expect(store.hotkeyMode == .pushToTalk)
             #expect(store.dictationKey == .rightCommand)
             #expect(store.playSounds)
             #expect(store.hapticFeedback)
             #expect(store.restoreClipboard)
             #expect(store.languageHint == "auto")
             #expect(store.inputDeviceUID == "")
-            #expect(store.hudPosition == .bottomCenter)
+            #expect(store.hudPosition == .nearPointer)
             #expect(!store.keepMicWarm)
             #expect(!store.onboardingCompleted)
             #expect(store.dictationEnabled)
@@ -35,6 +35,7 @@ struct SettingsStoreTests {
             defaults.set("fr", forKey: "languageHint")
             defaults.set("BuiltInMicUID", forKey: "inputDeviceUID")
             defaults.set(SettingsStore.HUDPosition.topCenter.rawValue, forKey: "hudPosition")
+            defaults.set(true, forKey: "nearPointerHUDMigrationCompleted")
             defaults.set(true, forKey: "keepMicWarm")
             defaults.set(true, forKey: "onboardingCompleted")
 
@@ -50,6 +51,21 @@ struct SettingsStoreTests {
             #expect(store.hudPosition == .topCenter)
             #expect(store.keepMicWarm)
             #expect(store.onboardingCompleted)
+        }
+    }
+
+    @Test
+    func legacyHUDPositionMigratesToNearPointerOnlyOnce() {
+        withEmptyDefaults { defaults in
+            defaults.set(SettingsStore.HUDPosition.topCenter.rawValue, forKey: "hudPosition")
+
+            let migrated = SettingsStore(defaults: defaults)
+            #expect(migrated.hudPosition == .nearPointer)
+            #expect(defaults.bool(forKey: "nearPointerHUDMigrationCompleted"))
+
+            migrated.hudPosition = .topCenter
+            let reopened = SettingsStore(defaults: defaults)
+            #expect(reopened.hudPosition == .topCenter)
         }
     }
 

@@ -204,6 +204,7 @@ final class DictationController: ObservableObject {
         hotkey.onBegin = { [weak self] in self?.startDictation() ?? false }
         hotkey.onEnd = { [weak self] in self?.stopDictationAndTranscribe() }
         hotkey.onCancel = { [weak self] in self?.cancelDictation() }
+        hotkey.onHandsFree = { [weak self] in self?.handleHandsFree() }
         hotkey.onPermissionLost = { [weak self] in self?.handleInputMonitoringLost() }
 
         microphone.onLevel = { [weak self] level in
@@ -332,6 +333,7 @@ final class DictationController: ObservableObject {
 
         // HUD first: it must be on screen at key-down, before audio flows.
         hideTask?.cancel()
+        hud.setActionHint(recordingActionHint)
         hud.show(.recording)
         partialTranscript = nil
         partialSettled = false
@@ -434,7 +436,8 @@ final class DictationController: ObservableObject {
 
         // Personal vocabulary runs before the empty-check: a rule can delete the
         // whole utterance, which then takes the "Didn't catch that." path.
-        let text = vocabulary.apply(to: result.text.trimmingCharacters(in: .whitespacesAndNewlines))
+        let cleaned = TranscriptSanitizer.clean(result.text)
+        let text = vocabulary.apply(to: cleaned)
         guard !text.isEmpty else {
             phase = .idle
             currentRecordingID = nil
@@ -554,6 +557,22 @@ final class DictationController: ObservableObject {
         showUserIssue(.inputMonitoringPermissionMissing)
     }
 
+    private var recordingActionHint: String {
+        switch settings.hotkeyMode {
+        case .pushToTalk:
+            return "Release to paste"
+        case .toggle:
+            return "Press again to paste"
+        case .hybrid:
+            return "Release to paste · tap for hands-free"
+        }
+    }
+
+    private func handleHandsFree() {
+        guard phase == .recording else { return }
+        hud.setActionHint("Press again to paste")
+    }
+
     private func handleMicrophoneInterruption(_ error: MicrophoneCapture.CaptureError) {
         guard phase == .recording else { return }
         hotkey.setRecordingActive(false)
@@ -607,14 +626,11 @@ final class DictationController: ObservableObject {
         }
     }
 
-    /// The final text has two sources. Automatic language: finish the streaming
-    /// session — it has already heard everything, so only the last window is
-    /// left to decode (near-zero perceived latency). Pinned language: the
-    /// sliding-window API always auto-detects, so the session is dropped and the
-    /// batch path (the only one honoring the pin) transcribes; partials shown
-    /// during recording may therefore differ slightly from the final text.
-    /// Any streaming failure or a suspiciously empty streaming result falls back
-    /// to the batch path — streaming must never break dictation.
+    /// Streaming is deliberately preview-only. FluidAudio's sliding windows
+    /// overlap and can occasionally reconstruct the same phrase more than once;
+    /// treating that reconstruction as the paste payload produced very large,
+    /// repeated blocks. On release we transcribe the captured utterance exactly
+    /// once through the batch manager and paste only that canonical result.
     private nonisolated static func finalTranscription(
         _ samples: [Float],
         languageHint: String?,
@@ -624,23 +640,12 @@ final class DictationController: ObservableObject {
         guard let session else {
             return try await engine.transcribe(samples, languageHint: languageHint)
         }
-        guard languageHint == nil else {
-            await session.cancel()
-            return try await engine.transcribe(samples, languageHint: languageHint)
-        }
-        do {
-            let result = try await session.finish()
-            let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            if text.isEmpty, samples.count >= Self.sampleRate / 2 {
-                // Streaming heard nothing in non-trivial audio — recheck via
-                // batch, which pads short clips and decodes in one pass.
-                return try await engine.transcribe(samples, languageHint: nil)
-            }
-            return result
-        } catch {
-            NSLog("MoDict: streaming finish failed, falling back to batch: \(error)")
-            return try await engine.transcribe(samples, languageHint: nil)
-        }
+
+        // Stop overlapping-window inference before running the canonical pass.
+        // Both managers share the loaded Core ML models; serializing them avoids
+        // contention and makes release-time behavior deterministic.
+        await session.cancel()
+        return try await engine.transcribe(samples, languageHint: languageHint)
     }
 
     /// Show a HUD state, then hide after `dwell`. Every terminal path funnels here

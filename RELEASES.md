@@ -13,6 +13,28 @@ and publishes `MoDict-X.Y.Z.dmg` on the
 - Highlight 2
 -->
 
+## v0.2.0 — 2026-07-13
+
+- Live transcription in the HUD: the composition card shows a rolling
+  three-line preview of what you are saying, updated about once per second
+  while you speak. Confirmed text is primary, the still-volatile tail is
+  secondary; the pasted text still comes from the full-utterance pass.
+- The preview is a bottom-pinned caption window (no scrolling machinery):
+  the newest words sit on a fixed baseline and older lines glide up through
+  a constant top fade — no more erratic jumps while dictating.
+- The card keeps one width for the whole session, and edge positions are
+  anchored: top-center pins the card just below the menu bar (and below the
+  camera housing on notched MacBooks, even with the menu bar hidden) and
+  grows downward only; bottom-center mirrors it upward.
+- Streaming merge hardened: hypothesis fragments are anchored on at least
+  three shared words or appended with boundary deduplication, so the live
+  preview can no longer cut sentences in half or momentarily empty and
+  refill during long dictations.
+- A repeated-phrase guard collapses accidentally duplicated spans (five or
+  more words) before anything is pasted.
+- Custom vocabulary replacements (Settings → Dictation) apply to both the
+  live preview and the pasted text.
+
 ## v0.1.2 — 2026-07-09
 
 - Fixed the Input Monitoring system prompt re-appearing on every launch (startup

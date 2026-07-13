@@ -295,13 +295,16 @@ private final class FluidStreamingSession: StreamingTranscriptionSession, @unche
             }
 
             let updates = Task { [weak self] in
+                var assembler = StreamingTranscriptAssembler()
                 for await update in updateStream {
                     guard let self else { break }
-                    // The manager mutates its transcripts before yielding, so
-                    // reading them after each update is always consistent.
+                    // Assemble overlapping hypotheses into one cumulative preview.
+                    // This is presentation-only; the final paste still comes from
+                    // the independent full-utterance batch transcription.
+                    let cumulativeText = assembler.ingest(update.text)
                     let partial = PartialTranscript(
-                        confirmedText: await manager.confirmedTranscript,
-                        volatileText: await manager.volatileTranscript
+                        confirmedText: cumulativeText,
+                        volatileText: ""
                     )
                     self.note(confidence: update.confidence)
                     self.onPartial(partial)

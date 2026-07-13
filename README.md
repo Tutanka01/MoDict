@@ -23,8 +23,8 @@ superwhisper, built to disappear until you need it.
   Short utterances transcribe in tens of milliseconds after you release the key —
   no round trip, no 1–2 second cloud lag.
 - **25 languages.** Parakeet v3 is multilingual; pick one or let MoDict detect it.
-- **It stays out of the way.** A floating capsule appears the moment you press the key
-  and vanishes the instant the text lands. No dashboard, no window, no Dock icon —
+- **It stays out of the way.** A small three-line composition preview appears near your
+  pointer and vanishes the instant the text lands. No dashboard, no Dock icon —
   just a menu bar glyph.
 
 ## Requirements
@@ -97,7 +97,7 @@ from Hugging Face.
 
 ## Usage
 
-Three activation styles (set in Settings → General; **Hybrid** is the default):
+Three activation styles (set in Settings → General; **Hold to talk** is the default):
 
 - **Hold to talk** — hold right ⌘, speak, release to transcribe.
 - **Tap to toggle** — tap right ⌘ to start, tap again to stop.
@@ -125,9 +125,9 @@ transcriptions live in the menu bar popover; click one to copy it again.
 
 1. A `CGEventTap` watches the right ⌘ key and starts capturing 16 kHz mono audio through
    `AVAudioEngine`.
-2. On release, Parakeet-TDT v3 transcribes the clip on the Neural Engine and returns
-   text in tens of milliseconds.
-3. The text is placed on the pasteboard, pasted with a synthetic ⌘V at your cursor, and
+2. While you speak, a rolling preview is shown near the pointer but nothing is inserted.
+3. On release, Parakeet-TDT v3 transcribes the full clip once on the Neural Engine.
+4. The text is placed on the pasteboard, pasted with a synthetic ⌘V at your cursor, and
    your previous clipboard is restored.
 
 The state machine, module boundaries, and the pitfalls behind each of these steps are

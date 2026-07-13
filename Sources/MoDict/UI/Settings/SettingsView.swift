@@ -310,9 +310,12 @@ private struct SettingsDictationTab: View {
             Section {
                 Toggle("Restore clipboard after insert", isOn: $settings.restoreClipboard)
                 Picker("HUD position", selection: $settings.hudPosition) {
+                    Text("Near pointer").tag(SettingsStore.HUDPosition.nearPointer)
                     Text("Bottom").tag(SettingsStore.HUDPosition.bottomCenter)
                     Text("Top").tag(SettingsStore.HUDPosition.topCenter)
                 }
+            } footer: {
+                Text("Near pointer shows a private preview where you are working; text is pasted only when dictation stops.")
             }
         }
         .formStyle(.grouped)

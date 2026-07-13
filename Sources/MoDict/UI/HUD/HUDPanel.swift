@@ -1,10 +1,10 @@
 import AppKit
 
-/// Borderless, non-activating panel that hosts the HUD capsule.
+/// Borderless, non-activating panel that hosts the composition preview.
 ///
 /// It must never become key or main: MoDict inserts text at the cursor of
 /// whatever app is focused, so stealing focus — even for an instant — would
-/// break insertion. `.statusBar` level keeps the capsule above normal windows,
+/// break insertion. `.statusBar` level keeps the card above normal windows,
 /// and the collection behavior lets it float over every Space and full-screen app.
 final class HUDPanel: NSPanel {
 
@@ -22,7 +22,7 @@ final class HUDPanel: NSPanel {
         hidesOnDeactivate = false
         isReleasedWhenClosed = false
 
-        // The capsule, its hairline and its shadow are all drawn in SwiftUI, so the
+        // The card, its hairline and its shadow are all drawn in SwiftUI, so the
         // window itself is fully transparent and casts no AppKit shadow.
         backgroundColor = .clear
         isOpaque = false

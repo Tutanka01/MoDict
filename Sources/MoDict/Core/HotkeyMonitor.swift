@@ -121,6 +121,9 @@ final class HotkeyMonitor {
     var onBegin: (() -> Bool)?
     var onEnd: (() -> Void)?
     var onCancel: (() -> Void)?
+    /// Hybrid/toggle has become hands-free after the trigger key was released.
+    /// The HUD uses this to replace the now-wrong "release" hint with "press again".
+    var onHandsFree: (() -> Void)?
     var onPermissionLost: (() -> Void)?
 
     /// True between `onBegin` and the matching `onEnd`/`onCancel`.
@@ -315,12 +318,14 @@ final class HotkeyMonitor {
         case .toggle:
             handsFree = true                 // keep recording; next press stops
             pressStartedSession = false
+            fire(onHandsFree)
         case .hybrid:
             if held >= Self.holdThreshold {
                 endSession()                 // it was a hold → push-to-talk
             } else {
                 handsFree = true             // brief tap → hands-free
                 pressStartedSession = false
+                fire(onHandsFree)
             }
         }
     }

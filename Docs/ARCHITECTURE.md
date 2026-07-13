@@ -36,7 +36,7 @@ Sources/MoDict/
     ├── HUD/
     │   ├── HUDController.swift   [hud]     show/hide/update the floating panel
     │   ├── HUDPanel.swift        [hud]     non-activating NSPanel subclass
-    │   └── HUDView.swift         [hud]     SwiftUI capsule: waveform / dots / check / error
+    │   └── HUDView.swift         [hud]     SwiftUI composition card + rolling preview
     ├── MenuBar/
     │   └── MenuBarView.swift     [menubar] popover content (status, history, footer)
     ├── Onboarding/
@@ -355,12 +355,12 @@ enum HUDState: Equatable {
     init(settings: SettingsStore)
     func show(_ state: HUDState)   // creates/orders the panel if needed, animates state change
     func setLevel(_ level: Float)  // 0…1 mic level, forwarded to the waveform
-    /// Live transcript beside the waveform (recording) / dots (transcribing);
-    /// nil clears it. ~1/s, so it goes through the observable model (unlike
-    /// `setLevel`); the capsule's width springs up to Theme.hudPartialMaxWidth,
-    /// showing the tail of the text (leading truncation), confirmed in primary,
-    /// volatile in secondary.
+    /// Cumulative preview in the composition card; nil clears it. The card grows
+    /// once (height only, away from the pinned screen edge), then a fixed
+    /// three-line bottom-pinned viewport shows the tail under a constant top
+    /// fade — no ScrollView, no per-partial animation.
     func setPartial(_ partial: PartialTranscript?)
+    func setActionHint(_ hint: String) // release vs hands-free stop gesture
     func hide()                    // animate out, then orderOut
 }
 ```
@@ -368,8 +368,11 @@ Panel: `NSPanel` subclass, `styleMask [.nonactivatingPanel, .fullSizeContentView
 `canBecomeKey/Main = false`, `level = .statusBar`, `collectionBehavior =
 [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]`, `isFloatingPanel`,
 `hidesOnDeactivate = false`, clear/transparent, `ignoresMouseEvents = true`,
-`NSHostingView` content. Position per `settings.hudPosition` on the screen containing the
-mouse pointer. All visuals per Docs/DESIGN.md.
+`NSHostingView` content. Default position is near the pointer captured on key-down; legacy
+bottom/top positions remain selectable. Edge modes pin the card's near edge — top-center pins
+the card top just below the menu bar (and below the camera housing via `safeAreaInsets` when
+the menu bar auto-hides) and grows downward only; bottom-center mirrors it — so the growing
+preview never crosses into the notch band. All visuals per Docs/DESIGN.md.
 
 ### Onboarding [onboarding] — `OnboardingController.swift`
 
@@ -390,7 +393,8 @@ The view drives real actions: `Permissions.*`, `app.controller.prepareEngine()`,
 - `SettingsStore`: `@MainActor ObservableObject`, `@Published` properties persisted to
   UserDefaults: `hotkeyMode`, `dictationKey` (`DictationKey`, default `.rightCommand`),
   `playSounds`, `hapticFeedback`, `restoreClipboard`,
-  `languageHint` ("auto"), `inputDeviceUID` (""), `hudPosition` (.bottomCenter/.topCenter),
+  `languageHint` ("auto"), `inputDeviceUID` (""), `hudPosition`
+  (.nearPointer/.bottomCenter/.topCenter, near-pointer default + one-time migration),
   `keepMicWarm`, `launchAtLogin`, `onboardingCompleted`, `dictationEnabled`.
 - `Permissions`: static helpers — `microphoneGranted`, `requestMicrophone() async -> Bool`,
   `accessibilityGranted`, `requestAccessibility()`, `inputMonitoringGranted`,
@@ -412,12 +416,13 @@ The view drives real actions: `Permissions.*`, `app.controller.prepareEngine()`,
   `stopDictationAndTranscribe()`, `cancelDictation()`. Transcription runs under a timeout
   (`max(30 s, 4×audio + 5 s)`) so a wedged engine can never leave the app stuck in
   `.transcribing`.
-  Streaming: `startDictation` also opens a best-effort streaming session (mic `onChunk` →
-  session; partials hop to the main actor, drop when the recordingID is stale, get vocabulary
-  applied, and land in `partialTranscript` + `hud.setPartial`). The final text is dual-path:
-  language "auto" → `session.finish()` (near-zero latency; any throw / suspiciously empty
-  result falls back to batch); pinned language → session cancelled, batch only (the sliding
-  window API can't pin, so partials may differ slightly from the final). Every terminal path
+  Streaming: `startDictation` opens a best-effort preview session (mic `onChunk` → session;
+  `StreamingTranscriptAssembler` merges overlapping hypotheses into a cumulative document;
+  updates hop to the main actor, drop when the recordingID is stale, get vocabulary applied,
+  and land in `partialTranscript` + `hud.setPartial`). It is never authoritative.
+  On stop, the session is cancelled and the full captured utterance is transcribed once through
+  batch (which also honors a pinned language). `TranscriptSanitizer` then removes only adjacent
+  duplicated spans of 5+ words before vocabulary and insertion. Every terminal path
   cancels the session and clears `partialTranscript`; a <0.35 s recording cancels it silently.
   The full-utterance sample buffer remains the batch input and fallback — streaming failures
   must never break dictation.

@@ -2,7 +2,7 @@
 
 MoDict is a **quiet tool**. It should feel like a native part of macOS that Apple forgot to ship:
 monochrome, weightless, instant. No dashboards, no gradients, no mascots. The entire visible
-surface of the app is: a menu bar glyph, a floating capsule while you speak, a small onboarding
+surface of the app is: a menu bar glyph, a floating composition card while you speak, a small onboarding
 window, and a settings window. Every one of them must feel inevitable.
 
 ## Principles
@@ -20,7 +20,7 @@ window, and a settings window. Every one of them must feel inevitable.
 
 | Token | Value | Usage |
 |---|---|---|
-| Surface | `.ultraThinMaterial` | HUD capsule, menu bar popover |
+| Surface | `.regularMaterial` | HUD composition card; menu bar uses system material |
 | Stroke | `Color.white.opacity(0.08)` (dark) / `Color.black.opacity(0.06)` (light) | 0.5 pt hairline border on HUD |
 | Primary | `Color.primary` | Waveform bars, icons, text |
 | Secondary | `Color.secondary` | Captions, hints, timestamps |
@@ -39,52 +39,55 @@ System font only (SF Pro). Sizes:
 - Menu bar list items: `.system(size: 13)`
 - Settings: standard SwiftUI `Form` styles.
 
-## The HUD (recording capsule)
+## The HUD (composition preview)
 
-The single most important surface. A floating capsule hosted in a non-activating `NSPanel`.
+The single most important surface. A non-activating `NSPanel` presents a small composition card
+near the pointer captured on key-down. It never steals focus and never writes into the target
+application while recording.
 
 **Geometry**
-- Height: **38 pt**. Corner radius: full capsule.
-- Width is state-dependent and animates: recording ≈ **148 pt**, transcribing ≈ **96 pt**,
-  success ≈ **56 pt**, error: fits text up to 260 pt. While a live transcript is shown
-  (recording or transcribing), the capsule sizes to its content up to **420 pt**.
-- Position: bottom-center of the screen containing the mouse pointer, **28 pt** above the
-  bottom edge. (Settings offers top-center as alternative.)
-- Background `.ultraThinMaterial` in `Capsule()`, hairline stroke, soft shadow (see tokens).
+- Rounded rectangle, **16 pt** continuous corner radius, `.regularMaterial`, hairline and shadow.
+- Session (listening/transcribing) width: **380 pt** — one width whether or not the preview is
+  visible, so the caption's wrap column never changes mid-dictation. Success: **118 pt**.
+  Error: **280 pt**.
+- Default position: centered above the pointer, with a **78 pt** center offset; it flips below
+  near the menu bar and clamps to the visible screen. The anchor is frozen for the full
+  recording → transcribing → success/error sequence, so mouse movement never drags the card.
+- Bottom-center and top-center remain optional positions in Settings. Existing installations
+  migrate once to near-pointer, then later user choices are preserved.
+- Edge modes pin the card's near edge and grow only toward the free side. Top-center: card top
+  sits **10 pt** below the menu bar — and below the camera housing when the menu bar auto-hides
+  (`min(visibleFrame.maxY, frame.maxY − safeAreaInsets.top)`) — and the preview expands
+  downward only, so the card can never enter the notch band. Bottom-center mirrors it: bottom
+  edge fixed **28 pt** above the screen bottom, growth upward. Near-pointer clamps the fully
+  grown card (not just the panel) below the same safe top.
 
 **States & content**
 | State | Content | Notes |
 |---|---|---|
-| `recording` | 6 pt red pulsing dot + 7 waveform bars, live transcript to their right once partials arrive | bars are `Color.primary`; no partials (streaming unavailable) = the plain 148 pt capsule |
-| `transcribing` | 3 dots pulsing in sequence, keeping the last transcript beside them | text settles into the final instead of blanking |
-| `success` | `checkmark` SF Symbol, medium weight | shown ~700 ms then panel hides |
-| `error(message)` | `exclamationmark.triangle` (or `mic.slash` / `lock.fill` when relevant) + 12 pt label | red icon, primary text; shown ~2.2 s |
+| `recording` | red pulse + 7 waveform bars, “Listening”, and the exact stop gesture | “Release to paste” for Hold; hands-free changes to “Press again to paste” |
+| `transcribing` | 3 dots, “Preparing paste”, “Released”, and the last preview | the target application is still untouched |
+| `success` | `checkmark.circle.fill` + “Pasted” | shown ~700 ms then hidden |
+| `error(message)` | contextual red symbol + primary label | up to two lines; shown ~2.2 s |
 
-**Live transcript**
-- One trailing-aligned line, HUD label type (12 pt medium), max **320 pt** wide (the capsule
-  adds dot/waveform/dots + **14 pt** horizontal padding around it). Confirmed words are
-  `Color.primary`; the volatile tail is `Color.secondary`, joined by a real space glyph so the
-  pair reads as one continuous line.
-- **Overflow**: the beginning clips (`.head`), never the tail — the newest words stay crisp at
-  the trailing edge. The hard ellipsis is hidden under a soft leading fade: a clear → opaque
-  mask ramp over the first **24 pt**, engaged only once the measured line exceeds its column
-  (0.2 s ease-out on engage/disengage).
-- **Motion**: partial updates animate with `Theme.textSpring` `.spring(response: 0.4,
-  dampingFraction: 0.9)` — fully damped so the trailing-aligned text and the growing capsule
-  never overshoot or fight. Text changes cross-fade (`contentTransition(.opacity)`); the
-  volatile segment blurs in/out (`.blurReplace`). Because the joined line is unchanged when
-  volatile words confirm, glyphs hold their position and only the color settles
-  secondary → primary. Per-update, never per-character.
-- **First partial**: the capsule grows from 148 pt to fit under the same spring; the dot and
-  waveform keep their identity (one layout for both cases) and dock left while the text blooms
-  to the right, entering with `.blurReplace`.
-- **Choreography** (one continuous gesture): key-down → capsule appears (spring 0.32/0.75)
-  → words stream in (textSpring per partial, ~1/s) → release → waveform crossfades to the
-  three dots, capsule tightens (stateSpring 0.32/0.75) → final text settles (volatile tail
-  fades out, textSpring) → capsule contracts to the 56 pt check (stateSpring, check enters at
-  scale 0.6 + opacity) → 0.7 s dwell → 0.18 s ease-out hide. The HUD always ends hidden.
-- Streaming failed or unavailable: recording stays the pre-existing 148 pt dot + waveform —
-  never regressed.
+**Private preview and commit boundary**
+- Streaming is preview-only. `StreamingTranscriptAssembler` merges overlapping rolling
+  hypotheses into one cumulative document, preserving the stable prefix and revising only the
+  recent boundary. It never consumes FluidAudio’s repeated accumulated transcript.
+- The preview is 13 pt regular and leading aligned inside a fixed **three-line viewport**,
+  rendered as one bottom-pinned, top-clipped text block — not a ScrollView. The newest words
+  sit on a fixed bottom baseline; when a line wraps, older lines shift up through a constant
+  transparent → opaque top fade. There is no scroll position and no per-partial animation:
+  each update is a single deterministic layout pass (interpolating a live caption is what
+  makes it swim). Confirmed text is `primary 0.92`; the volatile tail is `secondary` — the
+  monochrome translation of Apple's provisional-dictation underline. Only the recent tail
+  (~220 chars, cut on a word boundary) is laid out, so cost stays flat on long dictations.
+- On key release/stop, streaming is cancelled. The complete captured utterance is transcribed
+  exactly once through the batch manager; only this canonical result can reach `TextInserter`.
+- A final repeated-phrase guard collapses adjacent duplicated spans of five or more words before
+  vocabulary replacement and paste. Short intentional emphasis remains untouched.
+- Choreography: key-down → card appears → rolling preview updates → release/stop → “Preparing
+  paste” → canonical text settles → one paste → “Pasted” → hide. Esc cancels with no paste.
 
 **Waveform**
 - 7 vertical bars: width 3 pt, gap 3 pt, corner radius 1.5 pt.
@@ -145,7 +148,7 @@ action. Nothing else. Steps advance automatically when their condition is met.
 Standard `Settings` scene, `TabView` style like System Settings. Small — flat hierarchy,
 strong defaults, every option earns its place:
 
-- **General**: activation (Hold to talk / Tap to toggle / Hybrid — segmented, hybrid default,
+- **General**: activation (Hold to talk / Tap to toggle / Hybrid — segmented, Hold default,
   one-line explanations), dictation key, Launch at login, Sounds, Haptics.
   - **Dictation key**: a horizontal row of four monochrome keycaps (Right Command / Option /
     Control / Globe) — real buttons, keyboard focusable, each cap **46 × 38 pt**, continuous
@@ -158,8 +161,8 @@ strong defaults, every option earns its place:
     to dictate, or tap to toggle.", adapted to key + mode). When Globe is chosen, a second calm
     caption points to System Settings › Keyboard → "Press 🌐 key to" → "Do Nothing".
 - **Dictation**: Language (Automatic + list from engine), Microphone (System default + list),
-  Vocabulary (personal text replacements), Restore clipboard after insert, "Keep microphone
-  warm" (faster start, shows orange dot — off by default, honest explanation).
+  Vocabulary (personal text replacements), Restore clipboard after insert, HUD position
+  (Near pointer default / Bottom / Top).
   - **Vocabulary**: a compact list of rules the model applies to every transcription before
     insertion. Each row is two plain fields (`.plain` style — quiet inline fields, equal
     widths, no boxes) joined by an `arrow.right` glyph (10 pt medium, `.tertiary`, fixed

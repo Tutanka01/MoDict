@@ -1,61 +1,88 @@
-import AppKit
 import SwiftUI
 
-/// Observable state backing the HUD capsule. Owned by `HUDController`, observed by
-/// `HUDRootView`.
+/// Which panel edge the card is pinned to. The panel is an oversized
+/// transparent canvas; pinning the card to the edge nearest the screen edge
+/// makes growth move only the free edge — a top-center card grows downward,
+/// away from the menu bar and the camera housing.
+enum HUDPlacement {
+    case top
+    case center
+    case bottom
+}
+
+/// Observable state backing the near-pointer composition preview.
 ///
-/// `level` is deliberately *not* `@Published`: it is written at microphone-buffer
-/// rate and read only by the waveform through a `TimelineView`, which redraws on
-/// its own clock. Publishing it would invalidate the whole HUD on every buffer.
+/// `level` is deliberately not published: the display-clock waveform reads it
+/// directly, avoiding a full card re-render for every microphone buffer.
 @MainActor
 final class HUDModel: ObservableObject {
     @Published var state: HUDState = .recording
-    /// Live transcript of the utterance in flight (recording + transcribing).
-    /// Arrives ~1/s — cheap enough to publish, unlike `level`.
     @Published var partial: PartialTranscript?
-    /// Whole-capsule appearance, animated by the controller (spring in, ease-out).
-    @Published var contentScale: CGFloat = 0.92
+    @Published var actionHint = "Release to paste"
+    @Published var placement: HUDPlacement = .center
+    @Published var contentScale: CGFloat = 0.94
     @Published var contentOpacity: Double = 0
-    /// Bumped on every error presentation to (re)trigger the shake.
     @Published var shakeToken: Int = 0
 
     var level: CGFloat = 0
 }
 
-/// Root of the SwiftUI content hosted in the panel. Fills the (larger than the
-/// capsule) hosting view so the capsule sits centered with room for its shadow,
-/// and applies the appear/disappear scale + opacity.
 struct HUDRootView: View {
     @ObservedObject var model: HUDModel
 
     var body: some View {
-        HUDCapsule(model: model)
-            .scaleEffect(model.contentScale)
+        HUDCompositionCard(model: model)
+            .scaleEffect(model.contentScale, anchor: scaleAnchor)
             .opacity(model.contentOpacity)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: alignment)
+            .padding(edgeInsets)
             .allowsHitTesting(false)
+    }
+
+    private var alignment: Alignment {
+        switch model.placement {
+        case .top: return .top
+        case .center: return .center
+        case .bottom: return .bottom
+        }
+    }
+
+    /// Scaling around the pinned edge keeps that edge visually still during
+    /// appear/disappear, so the card seems attached to its screen edge.
+    private var scaleAnchor: UnitPoint {
+        switch model.placement {
+        case .top: return .top
+        case .center: return .center
+        case .bottom: return .bottom
+        }
+    }
+
+    private var edgeInsets: EdgeInsets {
+        switch model.placement {
+        case .top:
+            return EdgeInsets(top: Theme.hudCardEdgeMargin, leading: 0, bottom: 0, trailing: 0)
+        case .center:
+            return EdgeInsets()
+        case .bottom:
+            return EdgeInsets(top: 0, leading: 0, bottom: Theme.hudCardEdgeMargin, trailing: 0)
+        }
     }
 }
 
-// MARK: - Capsule
+// MARK: - Composition card
 
-private struct HUDCapsule: View {
+/// A compact composition surface rather than a status capsule: it tells the user
+/// what MoDict is doing, previews only a few recent lines, and makes the commit
+/// gesture explicit. The focused application remains untouched until stop.
+private struct HUDCompositionCard: View {
     @ObservedObject var model: HUDModel
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
         content
-            .frame(height: Theme.hudHeight)
-            .frame(width: fixedWidth)
-            .frame(maxWidth: maxWidth ?? .infinity)
-            // fixedSize makes the frame stack resolve against the content's ideal
-            // width instead of the (340 pt) hosting proposal — without it the
-            // maxWidth frame stretches the capsule to 260 pt in every state.
-            .fixedSize(horizontal: true, vertical: false)
-            .background(.ultraThinMaterial, in: Capsule())
-            .overlay(
-                Capsule().strokeBorder(Theme.hairline(for: scheme), lineWidth: 0.5)
-            )
+            .frame(width: cardWidth, alignment: .leading)
+            .background(.regularMaterial, in: cardShape)
+            .overlay(cardShape.strokeBorder(Theme.hairline(for: scheme), lineWidth: 0.75))
             .shadow(
                 color: Theme.hudShadow,
                 radius: Theme.hudShadowRadius,
@@ -65,7 +92,6 @@ private struct HUDCapsule: View {
             .keyframeAnimator(initialValue: CGFloat(0), trigger: model.shakeToken) { view, x in
                 view.offset(x: x)
             } keyframes: { _ in
-                // ±4 pt, twice, 0.05 s per leg (see DESIGN.md → error state).
                 KeyframeTrack {
                     CubicKeyframe(-4, duration: 0.05)
                     CubicKeyframe(4, duration: 0.05)
@@ -74,151 +100,193 @@ private struct HUDCapsule: View {
                     CubicKeyframe(0, duration: 0.05)
                 }
             }
+            .animation(Theme.stateSpring, value: model.state)
+            .animation(Theme.textSpring, value: hasPreview)
+    }
+
+    private var cardShape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: Theme.hudCornerRadius, style: .continuous)
     }
 
     @ViewBuilder private var content: some View {
         switch model.state {
         case .recording:
-            HUDRecordingContent(model: model)
+            recordingContent
                 .transition(.opacity)
         case .transcribing:
-            HUDTranscribingContent(model: model)
+            transcribingContent
                 .transition(.opacity)
         case .success:
-            HUDSuccessMark()
-                .transition(.scale(scale: 0.6).combined(with: .opacity))
+            successContent
+                .transition(.scale(scale: 0.92).combined(with: .opacity))
         case let .error(message, symbol):
-            HUDErrorContent(message: message, symbol: symbol)
+            errorContent(message: message, symbol: symbol)
                 .transition(.opacity)
         }
     }
 
-    private var hasPartial: Bool {
+    private var recordingContent: some View {
+        VStack(alignment: .leading, spacing: hasPreview ? 11 : 0) {
+            HStack(spacing: 9) {
+                TimelineView(.animation) { context in
+                    let t = context.date.timeIntervalSinceReferenceDate
+                    HStack(spacing: 8) {
+                        HUDRecordingDot(t: t)
+                        HUDWaveform(level: model.level, t: t)
+                    }
+                }
+
+                Text("Listening")
+                    .font(Theme.hudTitleFont)
+
+                Spacer(minLength: 12)
+
+                Text(model.actionHint)
+                    .font(Theme.hudHintFont)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            if let partial = model.partial, !partial.isEmpty {
+                Divider().opacity(0.4)
+                HUDPreviewText(partial: partial)
+            }
+        }
+        .padding(.horizontal, Theme.hudHorizontalPadding)
+        .padding(.vertical, Theme.hudVerticalPadding)
+    }
+
+    private var transcribingContent: some View {
+        VStack(alignment: .leading, spacing: hasPreview ? 11 : 0) {
+            HStack(spacing: 10) {
+                HUDTranscribingDots()
+                Text("Preparing paste")
+                    .font(Theme.hudTitleFont)
+                Spacer(minLength: 12)
+                Text("Released")
+                    .font(Theme.hudHintFont)
+                    .foregroundStyle(.secondary)
+            }
+
+            if let partial = model.partial, !partial.isEmpty {
+                Divider().opacity(0.4)
+                HUDPreviewText(partial: partial)
+            }
+        }
+        .padding(.horizontal, Theme.hudHorizontalPadding)
+        .padding(.vertical, Theme.hudVerticalPadding)
+    }
+
+    private var successContent: some View {
+        HStack(spacing: 9) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 15, weight: .semibold))
+            Text("Pasted")
+                .font(Theme.hudTitleFont)
+        }
+        .foregroundStyle(Color.primary)
+        .padding(.horizontal, Theme.hudHorizontalPadding)
+        .padding(.vertical, 12)
+    }
+
+    private func errorContent(message: String, symbol: String) -> some View {
+        HStack(spacing: 9) {
+            Image(systemName: symbol)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(Color.red)
+            Text(message)
+                .font(Theme.hudTitleFont)
+                .foregroundStyle(Color.primary)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, Theme.hudHorizontalPadding)
+        .padding(.vertical, 12)
+    }
+
+    private var hasPreview: Bool {
         model.partial.map { !$0.isEmpty } ?? false
     }
 
-    /// Fixed target widths for the settled states; `nil` lets the content size
-    /// itself (clamped by the outer `maxWidth`) — the error text, and the live
-    /// transcript while it streams in. Width changes are animated by the
-    /// controller: `Theme.stateSpring` for state switches, `Theme.textSpring`
-    /// for partial-transcript growth.
-    private var fixedWidth: CGFloat? {
+    private var cardWidth: CGFloat {
         switch model.state {
-        case .recording: return hasPartial ? nil : Theme.hudRecordingWidth
-        case .transcribing: return hasPartial ? nil : Theme.hudTranscribingWidth
-        case .success: return Theme.hudSuccessWidth
-        case .error: return nil
-        }
-    }
-
-    private var maxWidth: CGFloat? {
-        switch model.state {
-        case .recording, .transcribing: return hasPartial ? Theme.hudPartialMaxWidth : nil
-        case .success: return nil
-        case .error: return Theme.hudErrorMaxWidth
+        case .recording, .transcribing:
+            // One width for the whole session: a mid-dictation width change
+            // rewraps the caption on the same frame a partial lands, which
+            // reads as jitter.
+            return Theme.hudSessionWidth
+        case .success:
+            return Theme.hudSuccessWidth
+        case .error:
+            return Theme.hudErrorWidth
         }
     }
 }
 
-// MARK: - Recording (dot + waveform)
+// MARK: - Private preview
 
-private struct HUDRecordingContent: View {
-    @ObservedObject var model: HUDModel
-
-    var body: some View {
-        // Dot + waveform live in their own TimelineView so they redraw on the
-        // display clock without re-rendering the transcript, and keep their view
-        // identity when the first partial arrives — the waveform stays put on
-        // the left while the text blooms to the right.
-        HStack(spacing: 8) {
-            TimelineView(.animation) { context in
-                let t = context.date.timeIntervalSinceReferenceDate
-                HStack(spacing: 8) {
-                    HUDRecordingDot(t: t)
-                    HUDWaveform(level: model.level, t: t)
-                }
-            }
-            if let partial = model.partial, !partial.isEmpty {
-                HUDPartialText(partial: partial)
-                    .transition(.blurReplace)
-            }
-        }
-        .padding(.horizontal, Theme.hudContentPadding)
-    }
-}
-
-// MARK: - Live partial transcript
-
-/// One trailing-aligned line: confirmed words in `Color.primary`, the volatile
-/// tail in `Color.secondary`. The newest words matter most, so overflow clips
-/// the *beginning* — hidden under a soft leading fade instead of a hard "…".
-private struct HUDPartialText: View {
+/// A fixed-height, bottom-pinned caption window: the text lays out at its full
+/// natural height, the viewport shows only the last three lines, and older
+/// lines leave through a constant top fade.
+///
+/// Deliberately not a ScrollView. A programmatic scroll interpolates position
+/// over time, so partials arriving mid-animation stutter; bottom-pinning has no
+/// position to steer — every update is one deterministic layout pass, exactly
+/// like a hardware caption display.
+private struct HUDPreviewText: View {
     let partial: PartialTranscript
-    /// Whether the full line is wider than its column — decides the fade mask.
-    /// Measured with the same font AppKit-side; cheap, and recomputed only when
-    /// the partial changes (~1/s), never on the waveform's display clock.
-    private let overflows: Bool
-
-    private static let measuringFont =
-        NSFont.systemFont(ofSize: Theme.hudLabelFontSize, weight: .medium)
-
-    init(partial: PartialTranscript) {
-        self.partial = partial
-        let line = [partial.confirmedText, partial.volatileText]
-            .filter { !$0.isEmpty }
-            .joined(separator: " ")
-        let width = (line as NSString)
-            .size(withAttributes: [.font: Self.measuringFont]).width
-        self.overflows = width > Theme.hudPartialTextMaxWidth
-    }
 
     var body: some View {
-        HStack(spacing: 0) {
-            if !partial.confirmedText.isEmpty {
-                // Cross-fade content changes: when volatile words settle into
-                // the confirmed segment their glyphs keep their position (the
-                // joined line is unchanged), so only the color shifts
-                // secondary → primary — a gentle settling, not a flash.
-                Text(partial.confirmedText)
-                    .foregroundStyle(Color.primary)
-                    .contentTransition(.opacity)
-            }
-            if !partial.volatileText.isEmpty {
-                // Leading space glyph instead of HStack spacing keeps the two
-                // segments metrically identical to one continuous line.
-                Text(partial.confirmedText.isEmpty ? partial.volatileText
-                                                   : " " + partial.volatileText)
-                    .foregroundStyle(Color.secondary)
-                    .contentTransition(.opacity)
-                    // The tail always wins the width fight: newest words stay
-                    // crisp at the trailing edge, confirmed text yields and
-                    // clips at the leading edge.
-                    .layoutPriority(1)
-                    .transition(.blurReplace)
-            }
-        }
-        .font(Theme.hudLabelFont)
-        .lineLimit(1)
-        .truncationMode(.head)
-        .frame(maxWidth: Theme.hudPartialTextMaxWidth, alignment: .trailing)
-        .mask { fadeMask }
-        .animation(Theme.textFadeEase, value: overflows)
+        Text(display)
+            .font(Theme.hudPreviewFont)
+            .lineSpacing(2)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(height: Theme.hudPreviewHeight, alignment: .bottom)
+            .clipped()
+            .mask { topFade }
+            .accessibilityLabel("Dictation preview")
     }
 
-    /// Fully opaque until the text overflows, then the leading
-    /// `Theme.hudTextFadeWidth` points ramp clear → opaque, swallowing the
-    /// truncation ellipsis. The top rectangle fades out to engage the ramp.
-    private var fadeMask: some View {
-        ZStack {
-            HStack(spacing: 0) {
-                LinearGradient(colors: [.clear, .black],
-                               startPoint: .leading, endPoint: .trailing)
-                    .frame(width: Theme.hudTextFadeWidth)
-                Rectangle().fill(Color.black)
-            }
-            Rectangle().fill(Color.black)
-                .opacity(overflows ? 0 : 1)
+    /// One attributed string in one Text node — no per-update view insertion.
+    /// Volatile words are de-emphasized: the monochrome translation of Apple's
+    /// provisional-dictation underline.
+    private var display: AttributedString {
+        var confirmed = AttributedString(Self.tail(partial.confirmedText))
+        confirmed.foregroundColor = Color.primary.opacity(0.92)
+        guard !partial.volatileText.isEmpty else { return confirmed }
+
+        let separator = partial.confirmedText.isEmpty ? "" : " "
+        var volatile = AttributedString(separator + partial.volatileText)
+        volatile.foregroundColor = Color.secondary
+        return confirmed + volatile
+    }
+
+    /// Only the recent tail is rendered — the three-line window can never show
+    /// more — so layout cost stays flat over a long dictation. Cuts on a word
+    /// boundary so no half word ever surfaces under the fade.
+    private static func tail(_ text: String, limit: Int = 220) -> String {
+        guard text.count > limit else { return text }
+        let suffix = text.suffix(limit)
+        guard let space = suffix.firstIndex(where: \.isWhitespace) else {
+            return String(suffix)
         }
+        return String(suffix[suffix.index(after: space)...])
+    }
+
+    /// Always on, whether or not the text overflows: a conditional mask
+    /// snaps in the first time a line crosses the threshold.
+    private var topFade: some View {
+        LinearGradient(
+            stops: [
+                .init(color: .clear, location: 0),
+                .init(color: .black.opacity(0.55), location: 0.14),
+                .init(color: .black, location: 0.42),
+                .init(color: .black, location: 1)
+            ],
+            startPoint: .top,
+            endPoint: .bottom
+        )
     }
 }
 
@@ -226,11 +294,11 @@ private struct HUDRecordingDot: View {
     let t: TimeInterval
 
     var body: some View {
-        let phase = 0.5 + 0.5 * sin(t * 3.2)   // 0…1, ~0.5 Hz
+        let phase = 0.5 + 0.5 * sin(t * 3.2)
         Circle()
             .fill(Theme.recordingDot)
-            .frame(width: 6, height: 6)
-            .opacity(0.65 + 0.35 * phase)
+            .frame(width: 7, height: 7)
+            .opacity(0.68 + 0.32 * phase)
             .scaleEffect(0.9 + 0.12 * phase)
     }
 }
@@ -239,57 +307,34 @@ private struct HUDWaveform: View {
     let level: CGFloat
     let t: TimeInterval
 
-    // Center bars taller; per-bar phase + speed so the cluster never moves in
-    // lockstep and reads as organic.
     private static let shape: [CGFloat] = [0.50, 0.72, 0.90, 1.00, 0.90, 0.72, 0.50]
-    private static let phase: [Double]  = [0.0, 0.8, 1.7, 2.5, 3.4, 4.2, 5.1]
-    private static let speed: [Double]  = [8.2, 9.1, 7.6, 8.8, 7.9, 9.4, 8.0]
+    private static let phase: [Double] = [0.0, 0.8, 1.7, 2.5, 3.4, 4.2, 5.1]
+    private static let speed: [Double] = [8.2, 9.1, 7.6, 8.8, 7.9, 9.4, 8.0]
 
     var body: some View {
         HStack(spacing: Theme.waveformBarGap) {
-            ForEach(0..<Theme.waveformBarCount, id: \.self) { i in
+            ForEach(0..<Theme.waveformBarCount, id: \.self) { index in
                 Capsule()
-                    .fill(Color.primary)
-                    .frame(width: Theme.waveformBarWidth, height: barHeight(i))
+                    .fill(Color.primary.opacity(0.88))
+                    .frame(width: Theme.waveformBarWidth, height: barHeight(index))
             }
         }
         .frame(height: Theme.waveformBarMaxHeight)
     }
 
-    private func barHeight(_ i: Int) -> CGFloat {
-        let minH = Theme.waveformBarMinHeight
-        let maxH = Theme.waveformBarMaxHeight
-        let shape = Self.shape[i]
+    private func barHeight(_ index: Int) -> CGFloat {
+        let minHeight = Theme.waveformBarMinHeight
+        let maxHeight = Theme.waveformBarMaxHeight
+        let shape = Self.shape[index]
 
-        // Near silence: rest at the floor with a barely visible slow breathing.
         if level < 0.03 {
-            let breath = 0.5 + 0.5 * sin(t * 1.05 + Self.phase[i])
-            return minH + 1.1 * CGFloat(breath) * shape
+            let breath = 0.5 + 0.5 * sin(t * 1.05 + Self.phase[index])
+            return minHeight + 1.1 * CGFloat(breath) * shape
         }
 
-        let wobble = 0.55 + 0.45 * (0.5 + 0.5 * sin(t * Self.speed[i] + Self.phase[i]))
-        let amp = min(1, level * shape * CGFloat(wobble))
-        return minH + (maxH - minH) * amp
-    }
-}
-
-// MARK: - Transcribing (three sequential dots, keeping the last partial)
-
-private struct HUDTranscribingContent: View {
-    @ObservedObject var model: HUDModel
-
-    var body: some View {
-        // The last partial stays next to the dots so the text visually settles
-        // into the final instead of blanking while the tail is decoded. One
-        // structure for both cases so the dots never change identity.
-        HStack(spacing: 8) {
-            HUDTranscribingDots()
-            if let partial = model.partial, !partial.isEmpty {
-                HUDPartialText(partial: partial)
-                    .transition(.blurReplace)
-            }
-        }
-        .padding(.horizontal, Theme.hudContentPadding)
+        let wobble = 0.55 + 0.45 * (0.5 + 0.5 * sin(t * Self.speed[index] + Self.phase[index]))
+        let amplitude = min(1, level * shape * CGFloat(wobble))
+        return minHeight + (maxHeight - minHeight) * amplitude
     }
 }
 
@@ -297,47 +342,17 @@ private struct HUDTranscribingDots: View {
     var body: some View {
         TimelineView(.animation) { context in
             let t = context.date.timeIntervalSinceReferenceDate
-            HStack(spacing: 6) {
-                ForEach(0..<3, id: \.self) { i in
-                    let v = 0.5 + 0.5 * sin(t * 4.4 - Double(i) * 0.7)
+            HStack(spacing: 4) {
+                ForEach(0..<3, id: \.self) { index in
+                    let value = 0.5 + 0.5 * sin(t * 4.4 - Double(index) * 0.7)
                     Circle()
                         .fill(Color.primary)
-                        .frame(width: 6, height: 6)
-                        .opacity(0.35 + 0.55 * v)
-                        .scaleEffect(0.75 + 0.25 * v)
+                        .frame(width: 5, height: 5)
+                        .opacity(0.30 + 0.60 * value)
+                        .scaleEffect(0.75 + 0.25 * value)
                 }
             }
+            .frame(width: 28, height: Theme.waveformBarMaxHeight)
         }
-    }
-}
-
-// MARK: - Success
-
-private struct HUDSuccessMark: View {
-    var body: some View {
-        Image(systemName: "checkmark")
-            .font(.system(size: 15, weight: .medium))
-            .foregroundStyle(Color.primary)
-    }
-}
-
-// MARK: - Error
-
-private struct HUDErrorContent: View {
-    let message: String
-    let symbol: String
-
-    var body: some View {
-        HStack(spacing: 7) {
-            Image(systemName: symbol)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(Color.red)
-            Text(message)
-                .font(Theme.hudLabelFont)
-                .foregroundStyle(Color.primary)
-                .lineLimit(1)
-        }
-        .padding(.horizontal, 16)
-        .fixedSize()
     }
 }
