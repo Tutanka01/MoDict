@@ -10,14 +10,17 @@ final class AppModel {
 
     let settings: SettingsStore
     let history: HistoryStore
+    let vocabulary: VocabularyStore
     let controller: DictationController
 
     private init() {
         let settings = SettingsStore()
         let history = HistoryStore()
+        let vocabulary = VocabularyStore()
         self.settings = settings
         self.history = history
-        self.controller = DictationController(settings: settings, history: history)
+        self.vocabulary = vocabulary
+        self.controller = DictationController(settings: settings, history: history, vocabulary: vocabulary)
     }
 }
 
@@ -149,9 +152,13 @@ final class DictationController: ObservableObject {
     @Published private(set) var modelState: ModelState = .unknown
     @Published private(set) var userIssue: UserIssue?
     @Published private(set) var lastInsertedText: String?
+    /// Live transcript of the dictation in flight (vocabulary already applied);
+    /// nil whenever no dictation is running. Updated ~1/s by the streaming engine.
+    @Published private(set) var partialTranscript: PartialTranscript?
 
     let settings: SettingsStore
     let history: HistoryStore
+    let vocabulary: VocabularyStore
 
     private let hotkey: HotkeyMonitor
     private let microphone: MicrophoneCapture
@@ -163,6 +170,13 @@ final class DictationController: ObservableObject {
     /// Identity of the recording in flight; async completions compare against it
     /// and drop themselves when stale (double-taps, rapid re-triggers).
     private var currentRecordingID: UUID?
+    /// The live streaming session, if any. Boxed because the audio thread reads
+    /// it inside `onChunk` while the main actor swaps it per utterance — the
+    /// `onChunk` closure itself is set once and never mutated (tap-thread race).
+    private let streamingSessionBox = StreamingSessionBox()
+    /// Once the final text is on the HUD, straggler partial callbacks (already
+    /// queued main-actor hops) must not overwrite it while insertion runs.
+    private var partialSettled = false
     private var recordingStartedAt: TimeInterval = 0
     private var prepareTask: Task<Void, Never>?
     private var transcriptionTask: Task<Void, Never>?
@@ -171,12 +185,13 @@ final class DictationController: ObservableObject {
 
     /// Recordings shorter than this are treated as accidental and dropped.
     private static let minimumUtteranceSeconds: TimeInterval = 0.35
-    private static let sampleRate = 16_000
+    private nonisolated static let sampleRate = 16_000
     private static let minimumTranscriptionTimeout: TimeInterval = 30
 
-    init(settings: SettingsStore, history: HistoryStore) {
+    init(settings: SettingsStore, history: HistoryStore, vocabulary: VocabularyStore) {
         self.settings = settings
         self.history = history
+        self.vocabulary = vocabulary
         self.hotkey = HotkeyMonitor()
         self.microphone = MicrophoneCapture()
         self.engine = FluidAudioEngine()
@@ -185,6 +200,7 @@ final class DictationController: ObservableObject {
         self.sounds = SoundFeedback(settings: settings)
 
         hotkey.mode = settings.hotkeyMode
+        hotkey.key = settings.dictationKey
         hotkey.onBegin = { [weak self] in self?.startDictation() ?? false }
         hotkey.onEnd = { [weak self] in self?.stopDictationAndTranscribe() }
         hotkey.onCancel = { [weak self] in self?.cancelDictation() }
@@ -194,6 +210,11 @@ final class DictationController: ObservableObject {
             DispatchQueue.main.async {
                 self?.hud.setLevel(level)
             }
+        }
+        microphone.onChunk = { [box = streamingSessionBox] chunk in
+            // Audio thread. `feed` is synchronous and non-blocking; a single
+            // producer keeps the chunks ordered end-to-end.
+            box.value?.feed(chunk)
         }
         microphone.onFatalInterruption = { [weak self] error in
             DispatchQueue.main.async {
@@ -207,6 +228,7 @@ final class DictationController: ObservableObject {
     /// Start listening for the hotkey and load the model. Safe to call repeatedly.
     func activate() {
         hotkey.mode = settings.hotkeyMode
+        hotkey.key = settings.dictationKey
         if !hotkey.start() {
             showUserIssue(.inputMonitoringPermissionMissing)
         }
@@ -251,8 +273,9 @@ final class DictationController: ObservableObject {
         hotkey.stop()
     }
 
-    func refreshHotkeyMode() {
+    func refreshHotkeyConfiguration() {
         hotkey.mode = settings.hotkeyMode
+        hotkey.key = settings.dictationKey
     }
 
     func setDictationEnabled(_ enabled: Bool) {
@@ -310,9 +333,23 @@ final class DictationController: ObservableObject {
         // HUD first: it must be on screen at key-down, before audio flows.
         hideTask?.cancel()
         hud.show(.recording)
+        partialTranscript = nil
+        partialSettled = false
+        hud.setPartial(nil)
+        // Live partials are best-effort: the session buffers audio from the very
+        // first chunk while the recognizer spins up in the background; a start
+        // failure only means no streaming preview — batch still transcribes.
+        streamingSessionBox.value = engine.startStreamingSession { [weak self] partial in
+            Task { @MainActor [weak self] in
+                self?.handlePartial(partial, recordingID: recordingID)
+            }
+        }
         do {
             try microphone.start(deviceUID: settings.inputDeviceUID.isEmpty ? nil : settings.inputDeviceUID)
         } catch {
+            if let session = streamingSessionBox.take() {
+                Task { await session.cancel() }
+            }
             currentRecordingID = nil
             hotkey.setRecordingActive(false)
             showUserIssue(microphoneIssue(for: error))
@@ -330,12 +367,18 @@ final class DictationController: ObservableObject {
         guard phase == .recording, let recordingID = currentRecordingID else { return }
 
         let samples = microphone.stop()
+        let session = streamingSessionBox.take()
         let duration = TimeInterval(samples.count) / TimeInterval(Self.sampleRate)
 
         guard duration >= Self.minimumUtteranceSeconds else {
-            // Accidental tap — vanish silently.
+            // Accidental tap — vanish silently (including the streaming session).
+            if let session {
+                Task { await session.cancel() }
+            }
             phase = .idle
             currentRecordingID = nil
+            partialTranscript = nil
+            hud.setPartial(nil)
             hotkey.setRecordingActive(false)
             hud.hide()
             return
@@ -343,6 +386,8 @@ final class DictationController: ObservableObject {
 
         phase = .transcribing
         hotkey.setRecordingActive(true)
+        // The HUD keeps showing the last partial next to the dots, so the text
+        // visually settles into the final instead of blanking.
         hud.show(.transcribing)
 
         let languageHint = settings.languageHint == "auto" ? nil : settings.languageHint
@@ -354,10 +399,13 @@ final class DictationController: ObservableObject {
                 let result = try await self.transcribeWithTimeout(
                     samples,
                     languageHint: languageHint,
-                    timeout: timeout
+                    timeout: timeout,
+                    session: session
                 )
                 await self.finishTranscription(result, recordingID: recordingID)
             } catch {
+                // Idempotent; drops a session a timeout left mid-finish.
+                await session?.cancel()
                 await self.failTranscription(error, recordingID: recordingID)
             }
         }
@@ -367,10 +415,15 @@ final class DictationController: ObservableObject {
         guard phase == .recording || phase == .transcribing else { return }
         hotkey.setRecordingActive(false)
         microphone.cancel()
+        if let session = streamingSessionBox.take() {
+            Task { await session.cancel() }
+        }
         transcriptionTask?.cancel()
         transcriptionTask = nil
         currentRecordingID = nil   // in-flight transcription becomes stale
         phase = .idle
+        partialTranscript = nil
+        hud.setPartial(nil)
         hud.hide()
     }
 
@@ -379,22 +432,34 @@ final class DictationController: ObservableObject {
     private func finishTranscription(_ result: TranscriptionResult, recordingID: UUID) async {
         guard currentRecordingID == recordingID else { return }
 
-        let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Personal vocabulary runs before the empty-check: a rule can delete the
+        // whole utterance, which then takes the "Didn't catch that." path.
+        let text = vocabulary.apply(to: result.text.trimmingCharacters(in: .whitespacesAndNewlines))
         guard !text.isEmpty else {
             phase = .idle
             currentRecordingID = nil
             transcriptionTask = nil
+            partialTranscript = nil
+            hud.setPartial(nil)
             hotkey.setRecordingActive(false)
             transientHUD(.error(message: "Didn't catch that.", symbol: "waveform"),
                          dwell: 1.4)
             return
         }
 
+        // Settle the HUD text onto the final transcript while insertion runs.
+        partialSettled = true
+        let settled = PartialTranscript(confirmedText: text, volatileText: "")
+        partialTranscript = settled
+        hud.setPartial(settled)
+
         let outcome = await inserter.insert(text)
         guard currentRecordingID == recordingID else { return }
         phase = .idle
         currentRecordingID = nil
         transcriptionTask = nil
+        partialTranscript = nil
+        hud.setPartial(nil)
         hotkey.setRecordingActive(false)
 
         switch outcome {
@@ -424,6 +489,8 @@ final class DictationController: ObservableObject {
         phase = .idle
         currentRecordingID = nil
         transcriptionTask = nil
+        partialTranscript = nil
+        hud.setPartial(nil)
         hotkey.setRecordingActive(false)
         sounds.dictationFailed()
         if error is CancellationError {
@@ -490,10 +557,28 @@ final class DictationController: ObservableObject {
     private func handleMicrophoneInterruption(_ error: MicrophoneCapture.CaptureError) {
         guard phase == .recording else { return }
         hotkey.setRecordingActive(false)
+        if let session = streamingSessionBox.take() {
+            Task { await session.cancel() }
+        }
         currentRecordingID = nil
         phase = .idle
+        partialTranscript = nil
+        hud.setPartial(nil)
         sounds.dictationFailed()
         showUserIssue(microphoneIssue(for: error))
+    }
+
+    /// Streaming partials hop here onto the main actor. Stale recordings are
+    /// dropped; partials keep flowing during `.transcribing` so the settling
+    /// text tracks the final windows being drained.
+    private func handlePartial(_ partial: PartialTranscript, recordingID: UUID) {
+        guard currentRecordingID == recordingID, phase != .idle, !partialSettled else { return }
+        let display = PartialTranscript(
+            confirmedText: vocabulary.apply(to: partial.confirmedText),
+            volatileText: vocabulary.apply(to: partial.volatileText)
+        )
+        partialTranscript = display
+        hud.setPartial(display)
     }
 
     private static func transcriptionTimeout(forAudioDuration duration: TimeInterval) -> TimeInterval {
@@ -502,11 +587,13 @@ final class DictationController: ObservableObject {
 
     private func transcribeWithTimeout(_ samples: [Float],
                                        languageHint: String?,
-                                       timeout: TimeInterval) async throws -> TranscriptionResult {
+                                       timeout: TimeInterval,
+                                       session: (any StreamingTranscriptionSession)?) async throws -> TranscriptionResult {
         let engine = self.engine
         return try await withThrowingTaskGroup(of: TranscriptionResult.self) { group in
             group.addTask {
-                try await engine.transcribe(samples, languageHint: languageHint)
+                try await Self.finalTranscription(
+                    samples, languageHint: languageHint, session: session, engine: engine)
             }
             group.addTask {
                 try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
@@ -517,6 +604,42 @@ final class DictationController: ObservableObject {
             }
             group.cancelAll()
             return result
+        }
+    }
+
+    /// The final text has two sources. Automatic language: finish the streaming
+    /// session — it has already heard everything, so only the last window is
+    /// left to decode (near-zero perceived latency). Pinned language: the
+    /// sliding-window API always auto-detects, so the session is dropped and the
+    /// batch path (the only one honoring the pin) transcribes; partials shown
+    /// during recording may therefore differ slightly from the final text.
+    /// Any streaming failure or a suspiciously empty streaming result falls back
+    /// to the batch path — streaming must never break dictation.
+    private nonisolated static func finalTranscription(
+        _ samples: [Float],
+        languageHint: String?,
+        session: (any StreamingTranscriptionSession)?,
+        engine: FluidAudioEngine
+    ) async throws -> TranscriptionResult {
+        guard let session else {
+            return try await engine.transcribe(samples, languageHint: languageHint)
+        }
+        guard languageHint == nil else {
+            await session.cancel()
+            return try await engine.transcribe(samples, languageHint: languageHint)
+        }
+        do {
+            let result = try await session.finish()
+            let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if text.isEmpty, samples.count >= Self.sampleRate / 2 {
+                // Streaming heard nothing in non-trivial audio — recheck via
+                // batch, which pads short clips and decodes in one pass.
+                return try await engine.transcribe(samples, languageHint: nil)
+            }
+            return result
+        } catch {
+            NSLog("MoDict: streaming finish failed, falling back to batch: \(error)")
+            return try await engine.transcribe(samples, languageHint: nil)
         }
     }
 
@@ -534,3 +657,33 @@ final class DictationController: ObservableObject {
 }
 
 private struct TranscriptionTimeoutError: Error {}
+
+/// Hands the live streaming session across the main-actor/audio-thread boundary.
+/// The main actor swaps sessions per utterance while the tap thread reads inside
+/// `onChunk`, hence the lock.
+private final class StreamingSessionBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var session: (any StreamingTranscriptionSession)?
+
+    var value: (any StreamingTranscriptionSession)? {
+        get {
+            lock.lock()
+            defer { lock.unlock() }
+            return session
+        }
+        set {
+            lock.lock()
+            session = newValue
+            lock.unlock()
+        }
+    }
+
+    /// Atomically detach the current session.
+    func take() -> (any StreamingTranscriptionSession)? {
+        lock.lock()
+        defer { lock.unlock() }
+        let taken = session
+        session = nil
+        return taken
+    }
+}

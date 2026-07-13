@@ -1,12 +1,93 @@
 import Foundation
 import CoreGraphics
 
-/// Global right-⌘ hotkey via a session-level `CGEventTap`.
+/// The modifier that starts dictation. All four are right-hand / secondary keys
+/// detected via `.flagsChanged` with a *device-specific* flag bit, so the bit
+/// clears on release even when the left-hand sibling (e.g. left ⌘) is still held —
+/// never use the device-independent `.maskCommand`/`.maskAlternate` etc.
+enum DictationKey: String, CaseIterable {
+    case rightCommand
+    case rightOption
+    case rightControl
+    case globe
+
+    /// Virtual keycode reported in `.flagsChanged` (`keyboardEventKeycode`).
+    var keyCode: Int64 {
+        switch self {
+        case .rightCommand: return 54    // kVK_RightCommand
+        case .rightOption:  return 61    // kVK_RightOption
+        case .rightControl: return 62    // kVK_RightControl
+        case .globe:        return 63    // kVK_Function (Globe / fn)
+        }
+    }
+
+    /// Device-dependent bit, set in `event.flags` while the key is physically held.
+    var flagMask: UInt64 {
+        switch self {
+        case .rightCommand: return 0x10        // NX_DEVICERCMDKEYMASK
+        case .rightOption:  return 0x40        // NX_DEVICERALTKEYMASK
+        case .rightControl: return 0x2000      // NX_DEVICERCTLKEYMASK
+        case .globe:        return 0x800000    // NX_SECONDARYFNMASK (.maskSecondaryFn)
+        }
+    }
+
+    /// Full label, e.g. for accessibility.
+    var displayName: String {
+        switch self {
+        case .rightCommand: return "Right Command"
+        case .rightOption:  return "Right Option"
+        case .rightControl: return "Right Control"
+        case .globe:        return "Globe (fn)"
+        }
+    }
+
+    /// Compact label shown beneath the keycap in Settings.
+    var shortName: String {
+        switch self {
+        case .rightCommand: return "Command"
+        case .rightOption:  return "Option"
+        case .rightControl: return "Control"
+        case .globe:        return "Globe"
+        }
+    }
+
+    /// SF Symbol drawn on the keycap.
+    var keycapSymbol: String {
+        switch self {
+        case .rightCommand: return "command"
+        case .rightOption:  return "option"
+        case .rightControl: return "control"
+        case .globe:        return "globe"
+        }
+    }
+
+    /// Short status hint, e.g. "hold right ⌘" / "hold 🌐".
+    var holdHint: String {
+        switch self {
+        case .rightCommand: return "hold right ⌘"
+        case .rightOption:  return "hold right ⌥"
+        case .rightControl: return "hold right ⌃"
+        case .globe:        return "hold 🌐"
+        }
+    }
+
+    /// Reads naturally mid-sentence, e.g. "the right ⌘ key" / "the Globe key".
+    var inlineName: String {
+        switch self {
+        case .rightCommand: return "right ⌘"
+        case .rightOption:  return "right ⌥"
+        case .rightControl: return "right ⌃"
+        case .globe:        return "Globe"
+        }
+    }
+}
+
+/// Global dictation hotkey via a session-level `CGEventTap`.
 ///
-/// The tap listens for modifier changes (right ⌘ press/release) and key-downs
+/// The tap listens for modifier changes (chosen key press/release) and key-downs
 /// (combo detection + Esc-to-cancel). It only ever *swallows* one event: Esc
-/// while dictation can still be cancelled. Right ⌘ is a bare modifier and is never
-/// swallowed, so combos like ⌘C keep working.
+/// while dictation can still be cancelled. The dictation key is a bare modifier and
+/// is never swallowed, so combos like ⌘C keep working.
 ///
 /// The `CGEventTapCallBack` is a C function pointer and cannot capture context;
 /// it recovers `self` from `userInfo` and hops onto the main actor. The run-loop
@@ -25,6 +106,18 @@ final class HotkeyMonitor {
     }
 
     var mode: Mode = .hybrid
+    /// The modifier that triggers dictation. Changing it mid-session would strand a
+    /// press whose release lives on the old key, so any live session is cancelled.
+    var key: DictationKey = .rightCommand {
+        didSet {
+            guard oldValue != key else { return }
+            if isSessionActive { cancelSession() }
+            keyDown = false
+            pressStartedSession = false
+            accidentalStart = false
+            handsFree = false
+        }
+    }
     var onBegin: (() -> Bool)?
     var onEnd: (() -> Void)?
     var onCancel: (() -> Void)?
@@ -35,9 +128,7 @@ final class HotkeyMonitor {
 
     // MARK: Tuning
 
-    private static let rightCommandKeyCode: Int64 = 54          // kVK_RightCommand
     private static let escapeKeyCode: Int64 = 53               // kVK_Escape
-    private static let rightCommandFlagMask: UInt64 = 0x10     // NX_DEVICERCMDKEYMASK
     /// A hold this long or longer counts as push-to-talk (release stops); a
     /// briefer tap flips into hands-free/toggle.
     private static let holdThreshold: TimeInterval = 0.5
@@ -158,10 +249,10 @@ final class HotkeyMonitor {
 
         switch type {
         case .flagsChanged:
-            if keyCode == Self.rightCommandKeyCode {
-                // The device-dependent bit is right-⌘-specific: it clears on
-                // release even if the *left* ⌘ is still held.
-                let pressed = (event.flags.rawValue & Self.rightCommandFlagMask) != 0
+            if keyCode == key.keyCode {
+                // The device-dependent bit is specific to the chosen key: it clears
+                // on release even if the left-hand sibling modifier is still held.
+                let pressed = (event.flags.rawValue & key.flagMask) != 0
                 if pressed { handlePress(now) } else { handleRelease(now) }
             }
             return Unmanaged.passUnretained(event)   // never swallow a modifier

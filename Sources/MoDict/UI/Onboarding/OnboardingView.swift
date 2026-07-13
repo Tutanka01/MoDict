@@ -101,20 +101,22 @@ struct OnboardingView: View {
     private func stepView(for step: Int) -> some View {
         switch step {
         case 0:
-            OnboardingWelcomeStep()
+            OnboardingWelcomeStep(key: settings.dictationKey)
         case 1:
             OnboardingMicrophoneStep(granted: micGranted)
         case 2:
             OnboardingPermissionsStep(
                 accessibilityGranted: accessibilityGranted,
                 inputMonitoringGranted: inputMonitoringGranted,
+                key: settings.dictationKey,
                 onOpenAccessibility: openAccessibility,
                 onOpenInputMonitoring: openInputMonitoring
             )
         case 3:
             OnboardingModelStep(state: controller.modelState)
         default:
-            OnboardingTryItStep(text: $tryText, succeeded: tryItSucceeded, ready: allRequirementsReady)
+            OnboardingTryItStep(text: $tryText, succeeded: tryItSucceeded,
+                                ready: allRequirementsReady, key: settings.dictationKey)
         }
     }
 
@@ -429,6 +431,8 @@ private struct OnboardingStatusPill: View {
 // MARK: - Step 1 · Welcome
 
 private struct OnboardingWelcomeStep: View {
+    let key: DictationKey
+
     var body: some View {
         VStack(spacing: 22) {
             OnboardingAppGlyph()
@@ -436,14 +440,14 @@ private struct OnboardingWelcomeStep: View {
                 Text("Dictate anywhere.")
                     .font(Theme.onboardingTitleFont)
                     .tracking(-0.5)
-                Text("Hold the right ⌘ key, speak, release. Your words appear wherever your cursor is. 100% on-device.")
+                Text("Hold the \(key.inlineName) key, speak, release. Your words appear wherever your cursor is. 100% on-device.")
                     .font(Theme.onboardingBodyFont)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: 360)
             }
-            OnboardingKeycap()
+            OnboardingKeycap(key: key)
                 .padding(.top, 4)
         }
         .padding(.horizontal, 44)
@@ -472,13 +476,14 @@ private struct OnboardingAppGlyph: View {
     }
 }
 
-/// A small right-⌘ keycap that gently presses in a loop.
+/// A small keycap of the chosen dictation key that gently presses in a loop.
 private struct OnboardingKeycap: View {
+    let key: DictationKey
     @State private var pressed = false
 
     var body: some View {
         VStack(spacing: 7) {
-            Image(systemName: "command")
+            Image(systemName: key.keycapSymbol)
                 .font(.system(size: 16, weight: .medium))
                 .foregroundStyle(.secondary)
                 .frame(width: 46, height: 42)
@@ -486,7 +491,7 @@ private struct OnboardingKeycap: View {
                 .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).strokeBorder(Color.primary.opacity(0.12)))
                 .offset(y: pressed ? 3 : 0)
                 .shadow(color: Theme.hudShadow, radius: pressed ? 2 : 6, y: pressed ? 1 : 4)
-            Text("right ⌘")
+            Text(key.inlineName)
                 .font(.system(size: 11))
                 .foregroundStyle(.tertiary)
         }
@@ -525,6 +530,7 @@ private struct OnboardingMicrophoneStep: View {
 private struct OnboardingPermissionsStep: View {
     let accessibilityGranted: Bool
     let inputMonitoringGranted: Bool
+    let key: DictationKey
     let onOpenAccessibility: () -> Void
     let onOpenInputMonitoring: () -> Void
 
@@ -533,8 +539,8 @@ private struct OnboardingPermissionsStep: View {
             symbol: ready ? "checkmark.circle.fill" : "keyboard",
             title: "Keyboard access",
             message: ready
-                ? "Keyboard access is ready. MoDict can detect the right ⌘ key and type into your apps."
-                : "Both permissions are required before MoDict can detect the right ⌘ key and type into your apps."
+                ? "Keyboard access is ready. MoDict can detect the \(key.inlineName) key and type into your apps."
+                : "Both permissions are required before MoDict can detect the \(key.inlineName) key and type into your apps."
         ) {
             VStack(spacing: 12) {
                 OnboardingPermissionCard(
@@ -545,7 +551,7 @@ private struct OnboardingPermissionsStep: View {
                 )
                 OnboardingPermissionCard(
                     title: "Input Monitoring",
-                    detail: "Required to detect the right ⌘ key.",
+                    detail: "Required to detect the \(key.inlineName) key.",
                     granted: inputMonitoringGranted,
                     action: onOpenInputMonitoring
                 )
@@ -668,6 +674,7 @@ private struct OnboardingTryItStep: View {
     @Binding var text: String
     let succeeded: Bool
     let ready: Bool
+    let key: DictationKey
 
     var body: some View {
         VStack(spacing: 20) {
@@ -699,7 +706,7 @@ private struct OnboardingTryItStep: View {
                     Text("Try it")
                         .font(Theme.onboardingTitleFont)
                         .tracking(-0.5)
-                    Text("Click below, hold the right ⌘ key and say something.")
+                    Text("Click below, hold the \(key.inlineName) key and say something. Watch your words appear as you speak.")
                         .font(Theme.onboardingBodyFont)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)

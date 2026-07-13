@@ -29,9 +29,10 @@ final class HUDController {
     /// EMA state for the mic level (attack while rising, release while falling).
     private var smoothedLevel: Float = 0
 
-    /// The panel is intentionally larger than the widest capsule so the capsule can
-    /// grow, shake, and cast its shadow without ever being clipped by the window.
-    private static let panelSize = CGSize(width: 340, height: 120)
+    /// The panel is intentionally larger than the widest capsule (the live
+    /// transcript can reach `Theme.hudPartialMaxWidth`) so the capsule can grow,
+    /// shake, and cast its shadow without ever being clipped by the window.
+    private static let panelSize = CGSize(width: 480, height: 120)
 
     init(settings: SettingsStore) {
         self.settings = settings
@@ -72,6 +73,17 @@ final class HUDController {
         }
     }
 
+    /// Live transcript shown next to the waveform (recording) or the dots
+    /// (transcribing); nil clears it. Partials arrive ~1/s, so unlike `level`
+    /// this can go through the observable model. `textSpring` (fully damped)
+    /// drives both the capsule's width growth and the text cross-fades, so new
+    /// words materialize in the same gesture that widens the capsule — no
+    /// overshoot, no fighting between the two.
+    func setPartial(_ partial: PartialTranscript?) {
+        guard model.partial != partial else { return }
+        withAnimation(Theme.textSpring) { model.partial = partial }
+    }
+
     func setLevel(_ level: Float) {
         let clamped = max(0, min(1, level))
         let alpha = clamped > smoothedLevel ? Theme.levelAttack : Theme.levelRelease
@@ -94,6 +106,7 @@ final class HUDController {
             guard let self else { return }
             self.panel?.orderOut(nil)
             self.model.contentScale = 0.92   // reset for the next appearance
+            self.model.partial = nil         // never leak text into the next session
         }
         hideWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + Theme.disappearDuration, execute: work)

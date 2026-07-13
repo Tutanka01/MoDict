@@ -44,7 +44,9 @@ struct MenuBarView: View {
         MenuBar.Status.make(phase: controller.phase,
                             modelState: controller.modelState,
                             userIssue: controller.userIssue,
-                            enabled: settings.dictationEnabled)
+                            partial: controller.partialTranscript,
+                            enabled: settings.dictationEnabled,
+                            dictationKey: settings.dictationKey)
     }
 
     @ViewBuilder
@@ -107,16 +109,23 @@ enum MenuBar {
         var isError = false
         var showRetry = false
         var fraction: Double?
+        /// One quiet line of the live transcript while recording (tail only).
+        var liveText: String?
 
         static func make(phase: DictationController.Phase,
                          modelState: DictationController.ModelState,
                          userIssue: DictationController.UserIssue?,
-                         enabled: Bool) -> Status {
+                         partial: PartialTranscript?,
+                         enabled: Bool,
+                         dictationKey: DictationKey) -> Status {
+            let readyText = "Ready · \(dictationKey.holdHint) to dictate"
             switch phase {
             case .recording:
-                return Status(text: "Recording…", symbol: "waveform", isRecording: true)
+                return Status(text: "Recording…", symbol: "waveform", isRecording: true,
+                              liveText: liveLine(partial))
             case .transcribing:
-                return Status(text: "Transcribing…", symbol: "waveform")
+                return Status(text: "Transcribing…", symbol: "waveform",
+                              liveText: liveLine(partial))
             case .idle:
                 break
             }
@@ -134,7 +143,7 @@ enum MenuBar {
 
             switch modelState {
             case .ready:
-                return Status(text: "Ready · hold right ⌘ to dictate", symbol: "waveform")
+                return Status(text: readyText, symbol: "waveform")
             case .downloading(let progress):
                 switch progress.phase {
                 case .downloading:
@@ -147,7 +156,7 @@ enum MenuBar {
                 case .compiling:
                     return Status(text: "Preparing speech model…", symbol: "arrow.down.circle")
                 case .ready:
-                    return Status(text: "Ready · hold right ⌘ to dictate", symbol: "waveform")
+                    return Status(text: readyText, symbol: "waveform")
                 }
             case .needsDownload:
                 return Status(text: "Speech model needs download",
@@ -167,6 +176,16 @@ enum MenuBar {
         private static func modelFailureDetail(_ message: String) -> String {
             let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
             return trimmed.isEmpty ? "Retry from the menu." : trimmed
+        }
+
+        /// Confirmed + volatile joined into one plain line; nil when empty so
+        /// the status row keeps its resting height until words actually exist.
+        private static func liveLine(_ partial: PartialTranscript?) -> String? {
+            guard let partial else { return nil }
+            let line = [partial.confirmedText, partial.volatileText]
+                .filter { !$0.isEmpty }
+                .joined(separator: " ")
+            return line.isEmpty ? nil : line
         }
     }
 
@@ -197,6 +216,14 @@ enum MenuBar {
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
+                }
+                if let live = status.liveText {
+                    // The words in flight — one quiet line, newest words kept.
+                    Text(live)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.head)
                 }
                 if let fraction = status.fraction {
                     ProgressView(value: fraction)

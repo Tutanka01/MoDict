@@ -11,6 +11,7 @@ struct SettingsStoreTests {
             let store = SettingsStore(defaults: defaults)
 
             #expect(store.hotkeyMode == .hybrid)
+            #expect(store.dictationKey == .rightCommand)
             #expect(store.playSounds)
             #expect(store.hapticFeedback)
             #expect(store.restoreClipboard)
@@ -27,6 +28,7 @@ struct SettingsStoreTests {
     func persistedValuesOverrideDefaults() {
         withEmptyDefaults { defaults in
             defaults.set(HotkeyMonitor.Mode.toggle.rawValue, forKey: "hotkeyMode")
+            defaults.set(DictationKey.globe.rawValue, forKey: "dictationKey")
             defaults.set(false, forKey: "playSounds")
             defaults.set(false, forKey: "hapticFeedback")
             defaults.set(false, forKey: "restoreClipboard")
@@ -39,6 +41,7 @@ struct SettingsStoreTests {
             let store = SettingsStore(defaults: defaults)
 
             #expect(store.hotkeyMode == .toggle)
+            #expect(store.dictationKey == .globe)
             #expect(!store.playSounds)
             #expect(!store.hapticFeedback)
             #expect(!store.restoreClipboard)
@@ -56,6 +59,7 @@ struct SettingsStoreTests {
             let store = SettingsStore(defaults: defaults)
 
             store.hotkeyMode = .pushToTalk
+            store.dictationKey = .rightOption
             store.playSounds = false
             store.hapticFeedback = false
             store.restoreClipboard = false
@@ -66,6 +70,7 @@ struct SettingsStoreTests {
             store.onboardingCompleted = true
 
             #expect(defaults.string(forKey: "hotkeyMode") == HotkeyMonitor.Mode.pushToTalk.rawValue)
+            #expect(defaults.string(forKey: "dictationKey") == DictationKey.rightOption.rawValue)
             #expect(defaults.object(forKey: "playSounds") as? Bool == false)
             #expect(defaults.object(forKey: "hapticFeedback") as? Bool == false)
             #expect(defaults.object(forKey: "restoreClipboard") as? Bool == false)

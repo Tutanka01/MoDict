@@ -1,16 +1,19 @@
 import SwiftUI
 import AppKit
 
-/// Settings scene content. A System-Settings-style `TabView` at ~420 pt wide.
-/// Monochrome: standard `Form` controls tinted `.primary` so nothing colours the
-/// interface but the system red owned by the HUD (see Docs/DESIGN.md).
+/// Settings scene content. A System-Settings-style `TabView` at 460 pt wide —
+/// wide enough for the two vocabulary fields to breathe. Monochrome: standard
+/// `Form` controls tinted `.primary` so nothing colours the interface but the
+/// system red owned by the HUD (see Docs/DESIGN.md).
 struct SettingsView: View {
     @ObservedObject private var settings: SettingsStore
     @ObservedObject private var controller: DictationController
+    @ObservedObject private var vocabulary: VocabularyStore
 
     init(app: AppModel) {
         _settings = ObservedObject(wrappedValue: app.settings)
         _controller = ObservedObject(wrappedValue: app.controller)
+        _vocabulary = ObservedObject(wrappedValue: app.vocabulary)
     }
 
     var body: some View {
@@ -18,7 +21,7 @@ struct SettingsView: View {
             SettingsGeneralTab(settings: settings, controller: controller)
                 .tabItem { Label("General", systemImage: "gearshape") }
 
-            SettingsDictationTab(settings: settings)
+            SettingsDictationTab(settings: settings, vocabulary: vocabulary)
                 .tabItem { Label("Dictation", systemImage: "mic") }
 
             SettingsModelTab(controller: controller)
@@ -28,7 +31,7 @@ struct SettingsView: View {
                 .tabItem { Label("About", systemImage: "info.circle") }
         }
         .tint(.primary)
-        .frame(width: 420)
+        .frame(width: 460)
         .frame(minHeight: 340)
     }
 }
@@ -40,13 +43,23 @@ private struct SettingsGeneralTab: View {
     @ObservedObject var controller: DictationController
 
     private var activationExplanation: String {
+        let name = settings.dictationKey.inlineName
         switch settings.hotkeyMode {
         case .pushToTalk:
-            return "Hold the right Command key while speaking, then release to insert."
+            return "Hold the \(name) key while speaking, then release to insert."
         case .toggle:
-            return "Press the right Command key to start, and again to stop."
+            return "Press the \(name) key to start, and again to stop."
         case .hybrid:
             return "Hold to talk, or tap once to keep recording hands-free, then tap again to stop."
+        }
+    }
+
+    private var dictationKeyCaption: String {
+        let name = settings.dictationKey.inlineName
+        switch settings.hotkeyMode {
+        case .pushToTalk: return "Hold \(name) to dictate."
+        case .toggle: return "Tap \(name) to start, tap again to stop."
+        case .hybrid: return "Hold \(name) to dictate, or tap to toggle."
         }
     }
 
@@ -61,11 +74,28 @@ private struct SettingsGeneralTab: View {
                 .pickerStyle(.segmented)
                 .labelsHidden()
                 // Reload the live event tap so the new mode takes effect immediately.
-                .onChange(of: settings.hotkeyMode) { controller.refreshHotkeyMode() }
+                .onChange(of: settings.hotkeyMode) { controller.refreshHotkeyConfiguration() }
             } header: {
                 Text("Activation")
             } footer: {
                 Text(activationExplanation)
+            }
+
+            Section {
+                DictationKeyPicker(selection: $settings.dictationKey) {
+                    controller.refreshHotkeyConfiguration()
+                }
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.vertical, 4)
+            } header: {
+                Text("Dictation key")
+            } footer: {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(dictationKeyCaption)
+                    if settings.dictationKey == .globe {
+                        Text("If the Globe key is assigned in System Settings › Keyboard, set “Press 🌐 key to” to “Do Nothing” to avoid conflicts.")
+                    }
+                }
             }
 
             Section {
@@ -77,6 +107,74 @@ private struct SettingsGeneralTab: View {
             SettingsPermissionsSection(controller: controller)
         }
         .formStyle(.grouped)
+    }
+}
+
+// MARK: - Dictation key picker
+
+/// A row of four monochrome keycaps. Selecting one re-arms the live event tap.
+/// Real buttons — keyboard focusable, with a physical press (scale-down spring).
+private struct DictationKeyPicker: View {
+    @Binding var selection: DictationKey
+    let onChange: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            ForEach(DictationKey.allCases, id: \.self) { key in
+                Button {
+                    guard selection != key else { return }
+                    withAnimation(Theme.stateSpring) { selection = key }
+                    onChange()
+                } label: {
+                    Keycap(key: key, selected: key == selection)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(KeycapPressStyle())
+                .accessibilityLabel(key.displayName)
+                .accessibilityAddTraits(key == selection ? .isSelected : [])
+            }
+        }
+    }
+
+    private struct Keycap: View {
+        let key: DictationKey
+        let selected: Bool
+
+        var body: some View {
+            VStack(spacing: 6) {
+                Image(systemName: key.keycapSymbol)
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundStyle(selected ? Color.primary : Color.secondary)
+                    .frame(width: Theme.keycapWidth, height: Theme.keycapHeight)
+                    .background(
+                        RoundedRectangle(cornerRadius: Theme.keycapCornerRadius, style: .continuous)
+                            .fill(Color.primary.opacity(selected ? 0.10 : 0.03))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: Theme.keycapCornerRadius, style: .continuous)
+                            .strokeBorder(selected ? Color.primary.opacity(0.60)
+                                                   : Color.primary.opacity(0.12),
+                                          lineWidth: selected ? 1.5 : 1)
+                    )
+                    // A soft lift only under the selected cap gives it the
+                    // slight depth of a real key without breaking monochrome.
+                    .shadow(color: selected ? Theme.keycapSelectedShadow : .clear,
+                            radius: Theme.keycapSelectedShadowRadius,
+                            y: Theme.keycapSelectedShadowY)
+                Text(key.shortName)
+                    .font(.system(size: 10))
+                    .foregroundStyle(selected ? .secondary : .tertiary)
+            }
+        }
+    }
+}
+
+/// Tap-down feedback for the keycaps: compress like a physical key, spring back.
+private struct KeycapPressStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? Theme.keycapPressedScale : 1)
+            .animation(Theme.keycapPressSpring, value: configuration.isPressed)
     }
 }
 
@@ -144,7 +242,9 @@ private struct SettingsPermissionsSection: View {
 
 private struct SettingsDictationTab: View {
     @ObservedObject var settings: SettingsStore
+    @ObservedObject var vocabulary: VocabularyStore
     @State private var inputDevices: [MicrophoneCapture.InputDevice] = []
+    @FocusState private var focusedRule: UUID?
 
     private var selectedDeviceMissing: Bool {
         !settings.inputDeviceUID.isEmpty
@@ -178,6 +278,36 @@ private struct SettingsDictationTab: View {
             }
 
             Section {
+                if vocabulary.rules.isEmpty {
+                    Text("Teach MoDict names and terms it mishears. \"mo dict\" becomes \"MoDict\".")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach($vocabulary.rules) { $rule in
+                        VocabularyRuleRow(rule: $rule, focusedRule: $focusedRule) {
+                            vocabulary.rules.removeAll { $0.id == rule.id }
+                        }
+                    }
+                }
+
+                Button {
+                    let rule = VocabularyRule(phrase: "", replacement: "")
+                    vocabulary.rules.append(rule)
+                    // Focus after the new row exists in the hierarchy — setting
+                    // it in the same transaction can silently miss.
+                    DispatchQueue.main.async { focusedRule = rule.id }
+                } label: {
+                    Label("Add rule", systemImage: "plus.circle")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            } header: {
+                Text("Vocabulary")
+            } footer: {
+                Text("Applied to every dictation, before the text is inserted.")
+            }
+
+            Section {
                 Toggle("Restore clipboard after insert", isOn: $settings.restoreClipboard)
                 Picker("HUD position", selection: $settings.hudPosition) {
                     Text("Bottom").tag(SettingsStore.HUDPosition.bottomCenter)
@@ -187,6 +317,43 @@ private struct SettingsDictationTab: View {
         }
         .formStyle(.grouped)
         .onAppear { inputDevices = MicrophoneCapture.availableInputDevices() }
+    }
+}
+
+/// One vocabulary rule: two plain fields joined by an arrow, with a remove control
+/// that surfaces on hover. Editing either field mutates the store, which persists.
+/// Fixed-width arrow and remove columns keep the fields aligned across rows.
+private struct VocabularyRuleRow: View {
+    @Binding var rule: VocabularyRule
+    @FocusState.Binding var focusedRule: UUID?
+    let onRemove: () -> Void
+
+    @State private var hovered = false
+
+    var body: some View {
+        HStack(spacing: 10) {
+            TextField("Heard", text: $rule.phrase)
+                .textFieldStyle(.plain)
+                .focused($focusedRule, equals: rule.id)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Image(systemName: "arrow.right")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(.tertiary)
+                .frame(width: 16)
+            TextField("Replace with", text: $rule.replacement)
+                .textFieldStyle(.plain)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Button(action: onRemove) {
+                Image(systemName: "minus.circle.fill")
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .opacity(hovered ? 1 : 0)
+            .frame(width: 16)
+            .accessibilityLabel("Remove rule")
+        }
+        .animation(.easeOut(duration: 0.12), value: hovered)
+        .onHover { hovered = $0 }
     }
 }
 

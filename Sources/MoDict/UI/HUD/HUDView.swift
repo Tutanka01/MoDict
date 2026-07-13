@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Observable state backing the HUD capsule. Owned by `HUDController`, observed by
@@ -9,6 +10,9 @@ import SwiftUI
 @MainActor
 final class HUDModel: ObservableObject {
     @Published var state: HUDState = .recording
+    /// Live transcript of the utterance in flight (recording + transcribing).
+    /// Arrives ~1/s — cheap enough to publish, unlike `level`.
+    @Published var partial: PartialTranscript?
     /// Whole-capsule appearance, animated by the controller (spring in, ease-out).
     @Published var contentScale: CGFloat = 0.92
     @Published var contentOpacity: Double = 0
@@ -43,7 +47,7 @@ private struct HUDCapsule: View {
         content
             .frame(height: Theme.hudHeight)
             .frame(width: fixedWidth)
-            .frame(maxWidth: Theme.hudErrorMaxWidth)
+            .frame(maxWidth: maxWidth ?? .infinity)
             // fixedSize makes the frame stack resolve against the content's ideal
             // width instead of the (340 pt) hosting proposal — without it the
             // maxWidth frame stretches the capsule to 260 pt in every state.
@@ -78,7 +82,7 @@ private struct HUDCapsule: View {
             HUDRecordingContent(model: model)
                 .transition(.opacity)
         case .transcribing:
-            HUDTranscribingDots()
+            HUDTranscribingContent(model: model)
                 .transition(.opacity)
         case .success:
             HUDSuccessMark()
@@ -89,15 +93,29 @@ private struct HUDCapsule: View {
         }
     }
 
-    /// Fixed target widths for the settled states; `nil` lets the error state size
-    /// to its text (clamped by the outer `maxWidth`). Width changes are animated by
-    /// the controller wrapping state mutations in `Theme.stateSpring`.
+    private var hasPartial: Bool {
+        model.partial.map { !$0.isEmpty } ?? false
+    }
+
+    /// Fixed target widths for the settled states; `nil` lets the content size
+    /// itself (clamped by the outer `maxWidth`) — the error text, and the live
+    /// transcript while it streams in. Width changes are animated by the
+    /// controller: `Theme.stateSpring` for state switches, `Theme.textSpring`
+    /// for partial-transcript growth.
     private var fixedWidth: CGFloat? {
         switch model.state {
-        case .recording: return Theme.hudRecordingWidth
-        case .transcribing: return Theme.hudTranscribingWidth
+        case .recording: return hasPartial ? nil : Theme.hudRecordingWidth
+        case .transcribing: return hasPartial ? nil : Theme.hudTranscribingWidth
         case .success: return Theme.hudSuccessWidth
         case .error: return nil
+        }
+    }
+
+    private var maxWidth: CGFloat? {
+        switch model.state {
+        case .recording, .transcribing: return hasPartial ? Theme.hudPartialMaxWidth : nil
+        case .success: return nil
+        case .error: return Theme.hudErrorMaxWidth
         }
     }
 }
@@ -108,14 +126,98 @@ private struct HUDRecordingContent: View {
     @ObservedObject var model: HUDModel
 
     var body: some View {
-        // One clock drives both the dot pulse and the waveform so they stay in
-        // sync and the view redraws independently of `model.level` writes.
-        TimelineView(.animation) { context in
-            let t = context.date.timeIntervalSinceReferenceDate
-            HStack(spacing: 8) {
-                HUDRecordingDot(t: t)
-                HUDWaveform(level: model.level, t: t)
+        // Dot + waveform live in their own TimelineView so they redraw on the
+        // display clock without re-rendering the transcript, and keep their view
+        // identity when the first partial arrives — the waveform stays put on
+        // the left while the text blooms to the right.
+        HStack(spacing: 8) {
+            TimelineView(.animation) { context in
+                let t = context.date.timeIntervalSinceReferenceDate
+                HStack(spacing: 8) {
+                    HUDRecordingDot(t: t)
+                    HUDWaveform(level: model.level, t: t)
+                }
             }
+            if let partial = model.partial, !partial.isEmpty {
+                HUDPartialText(partial: partial)
+                    .transition(.blurReplace)
+            }
+        }
+        .padding(.horizontal, Theme.hudContentPadding)
+    }
+}
+
+// MARK: - Live partial transcript
+
+/// One trailing-aligned line: confirmed words in `Color.primary`, the volatile
+/// tail in `Color.secondary`. The newest words matter most, so overflow clips
+/// the *beginning* — hidden under a soft leading fade instead of a hard "…".
+private struct HUDPartialText: View {
+    let partial: PartialTranscript
+    /// Whether the full line is wider than its column — decides the fade mask.
+    /// Measured with the same font AppKit-side; cheap, and recomputed only when
+    /// the partial changes (~1/s), never on the waveform's display clock.
+    private let overflows: Bool
+
+    private static let measuringFont =
+        NSFont.systemFont(ofSize: Theme.hudLabelFontSize, weight: .medium)
+
+    init(partial: PartialTranscript) {
+        self.partial = partial
+        let line = [partial.confirmedText, partial.volatileText]
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        let width = (line as NSString)
+            .size(withAttributes: [.font: Self.measuringFont]).width
+        self.overflows = width > Theme.hudPartialTextMaxWidth
+    }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            if !partial.confirmedText.isEmpty {
+                // Cross-fade content changes: when volatile words settle into
+                // the confirmed segment their glyphs keep their position (the
+                // joined line is unchanged), so only the color shifts
+                // secondary → primary — a gentle settling, not a flash.
+                Text(partial.confirmedText)
+                    .foregroundStyle(Color.primary)
+                    .contentTransition(.opacity)
+            }
+            if !partial.volatileText.isEmpty {
+                // Leading space glyph instead of HStack spacing keeps the two
+                // segments metrically identical to one continuous line.
+                Text(partial.confirmedText.isEmpty ? partial.volatileText
+                                                   : " " + partial.volatileText)
+                    .foregroundStyle(Color.secondary)
+                    .contentTransition(.opacity)
+                    // The tail always wins the width fight: newest words stay
+                    // crisp at the trailing edge, confirmed text yields and
+                    // clips at the leading edge.
+                    .layoutPriority(1)
+                    .transition(.blurReplace)
+            }
+        }
+        .font(Theme.hudLabelFont)
+        .lineLimit(1)
+        .truncationMode(.head)
+        .frame(maxWidth: Theme.hudPartialTextMaxWidth, alignment: .trailing)
+        .mask { fadeMask }
+        .animation(Theme.textFadeEase, value: overflows)
+    }
+
+    /// Fully opaque until the text overflows, then the leading
+    /// `Theme.hudTextFadeWidth` points ramp clear → opaque, swallowing the
+    /// truncation ellipsis. The top rectangle fades out to engage the ramp.
+    private var fadeMask: some View {
+        ZStack {
+            HStack(spacing: 0) {
+                LinearGradient(colors: [.clear, .black],
+                               startPoint: .leading, endPoint: .trailing)
+                    .frame(width: Theme.hudTextFadeWidth)
+                Rectangle().fill(Color.black)
+            }
+            Rectangle().fill(Color.black)
+                .opacity(overflows ? 0 : 1)
         }
     }
 }
@@ -171,7 +273,25 @@ private struct HUDWaveform: View {
     }
 }
 
-// MARK: - Transcribing (three sequential dots)
+// MARK: - Transcribing (three sequential dots, keeping the last partial)
+
+private struct HUDTranscribingContent: View {
+    @ObservedObject var model: HUDModel
+
+    var body: some View {
+        // The last partial stays next to the dots so the text visually settles
+        // into the final instead of blanking while the tail is decoded. One
+        // structure for both cases so the dots never change identity.
+        HStack(spacing: 8) {
+            HUDTranscribingDots()
+            if let partial = model.partial, !partial.isEmpty {
+                HUDPartialText(partial: partial)
+                    .transition(.blurReplace)
+            }
+        }
+        .padding(.horizontal, Theme.hudContentPadding)
+    }
+}
 
 private struct HUDTranscribingDots: View {
     var body: some View {

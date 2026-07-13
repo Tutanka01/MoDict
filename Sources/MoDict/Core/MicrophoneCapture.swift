@@ -31,6 +31,11 @@ final class MicrophoneCapture: @unchecked Sendable {
     /// Visible level 0…1, called on the audio thread at buffer rate. The caller is
     /// responsible for hopping to the main thread before touching UI.
     var onLevel: (@Sendable (Float) -> Void)?
+    /// Converted 16 kHz mono chunk, called on the audio thread at buffer rate.
+    /// Receives exactly the samples appended to the utterance (same generation
+    /// guard as `onLevel`). Set once at wiring time — mutating it while the
+    /// engine runs would race the tap thread.
+    var onChunk: (@Sendable ([Float]) -> Void)?
     /// Called when capture stops unexpectedly after a successful start.
     var onFatalInterruption: (@Sendable (CaptureError) -> Void)?
 
@@ -231,6 +236,7 @@ final class MicrophoneCapture: @unchecked Sendable {
 
         if accepted {
             onLevel?(level)
+            onChunk?(chunk)
         }
     }
 

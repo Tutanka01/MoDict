@@ -22,11 +22,12 @@ Sources/MoDict/
 │   ├── DictationController.swift [core]    central state machine — owns all modules
 │   ├── SettingsStore.swift       [core]    user preferences (UserDefaults-backed)
 │   ├── Permissions.swift         [core]    mic / accessibility / input-monitoring helpers
-│   ├── HotkeyMonitor.swift       [hotkey]  right-⌘ CGEventTap (press/release/cancel)
+│   ├── HotkeyMonitor.swift       [hotkey]  configurable-key CGEventTap (press/release/cancel)
 │   ├── MicrophoneCapture.swift   [audio]   AVAudioEngine → 16 kHz mono Float samples
 │   ├── SoundFeedback.swift       [audio]   start/success/error sounds + haptics
 │   ├── TextInserter.swift        [insert]  clipboard + synthetic ⌘V, restore, secure-input
 │   ├── HistoryStore.swift        [menubar] recent transcriptions (in-memory)
+│   ├── VocabularyStore.swift     [vocabulary] user text replacements (UserDefaults JSON)
 │   └── Transcription/
 │       ├── TranscriptionEngine.swift [stt] protocol + shared result/progress types
 │       └── FluidAudioEngine.swift    [stt] FluidAudio/Parakeet implementation
@@ -85,6 +86,24 @@ struct ModelDownloadProgress: Sendable, Equatable {
     let fraction: Double           // 0…1 overall
 }
 
+/// Incremental transcript of an in-flight streaming session.
+struct PartialTranscript: Sendable, Equatable {
+    let confirmedText: String      // stable
+    let volatileText: String       // trailing hypothesis, may still be revised
+    var isEmpty: Bool { get }
+}
+
+/// Handle to one live streaming transcription session (one utterance).
+protocol StreamingTranscriptionSession: AnyObject, Sendable {
+    /// Synchronous, non-blocking, audio-thread-safe; a single producer keeps
+    /// chunk order. Chunks after finish()/cancel() are dropped.
+    func feed(_ chunk: [Float])
+    /// Drains everything fed and returns the final transcript. Throws when
+    /// streaming never got off the ground — caller falls back to batch.
+    func finish() async throws -> TranscriptionResult
+    func cancel() async            // silent, idempotent
+}
+
 protocol TranscriptionEngine: Actor {
     nonisolated var id: String { get }
     nonisolated var displayName: String { get }
@@ -93,6 +112,14 @@ protocol TranscriptionEngine: Actor {
     var isReady: Bool { get async }
     /// languageHint: BCP-47-ish code like "en" / "fr", nil = automatic.
     func transcribe(_ samples: [Float], languageHint: String?) async throws -> TranscriptionResult
+    /// Begin a streaming session (nil = engine can't stream at all). Synchronous
+    /// so the session buffers audio from the first mic chunk; the recognizer
+    /// spins up in the background and any failure degrades to no partials.
+    /// `onPartial` fires on arbitrary threads. A new session cancels the previous
+    /// one. Streaming always auto-detects language — only batch honors a pin.
+    nonisolated func startStreamingSession(
+        onPartial: @escaping @Sendable (PartialTranscript) -> Void
+    ) -> StreamingTranscriptionSession?
     func unload() async
 }
 ```
@@ -122,13 +149,44 @@ Implementation notes (validated against FluidAudio 0.15.5 source — README snip
   sources (`.build/checkouts/FluidAudio/Sources/FluidAudio/...`) before writing code.
 - Pad clips shorter than ~1 s with trailing silence (16 000 zero samples) before transcribing.
 - Do not let two `prepare()` calls download twice (share the in-flight Task).
+- Streaming: `prepare` retains the loaded `AsrModels`; each session gets a **fresh**
+  `SlidingWindowAsrManager` sharing them (`loadModels(_:)` is reference assignment only) —
+  the manager's input `AsyncStream` is built once in its `init` and permanently finished by
+  `finish()`/`cancel()`, so an instance can never stream a second utterance (`reset()` does
+  not revive it). Cadence knob is `chunkSeconds` (the presets' `hypothesisChunkSeconds` is
+  never read in 0.15.5); MoDict uses left 10 + chunk 1 + right 1 = 12 s ≤ the model's 15 s
+  input. Chunk ordering: tap thread → session-local `AsyncStream` (sync yield) → one pump
+  task → actor-isolated `streamAudio`. Never a `Task {}` per chunk (unordered).
+- After load, before reporting ready, run one throwaway transcription of 1 s of silence to
+  pay CoreML's one-time ANE placement cost off the user's first dictation. The bar stays at
+  compiling/0.99 during it; a warm-up failure is logged (`NSLog`) and never fails `prepare`.
 
 ### HotkeyMonitor [hotkey] — `HotkeyMonitor.swift`
 
 ```swift
+/// User-selectable trigger key. Each is a right-hand / secondary modifier read via
+/// `.flagsChanged` with a device-specific flag bit (`flagMask`) keyed to its
+/// `keyCode`, so release is detected even when the left-hand sibling is still held.
+enum DictationKey: String, CaseIterable {
+    case rightCommand   // keyCode 54, flagMask 0x10   (NX_DEVICERCMDKEYMASK)
+    case rightOption    // keyCode 61, flagMask 0x40   (NX_DEVICERALTKEYMASK)
+    case rightControl   // keyCode 62, flagMask 0x2000 (NX_DEVICERCTLKEYMASK)
+    case globe          // keyCode 63, flagMask 0x800000 (NX_SECONDARYFNMASK / .maskSecondaryFn)
+    var keyCode: Int64          // virtual keycode in .flagsChanged
+    var flagMask: UInt64        // device-dependent bit set while held
+    var displayName: String     // "Right Command" … "Globe (fn)"
+    var shortName: String       // "Command" … "Globe" (compact picker label)
+    var keycapSymbol: String    // SF Symbol name for the keycap ("command" … "globe")
+    var holdHint: String        // "hold right ⌘" / "hold 🌐"
+    var inlineName: String      // "right ⌘" / "Globe" (mid-sentence copy)
+}
+
 @MainActor final class HotkeyMonitor {
     enum Mode: String, CaseIterable { case pushToTalk, toggle, hybrid }
     var mode: Mode                       // set by controller from settings
+    /// The trigger modifier, set by the controller from settings. Changing it while
+    /// a session is live cancels that session (its release lives on the old key).
+    var key: DictationKey                // default .rightCommand
     /// Start recording. Returns whether the controller actually accepted — the
     /// monitor only opens a session on `true`, so a declined begin (model not
     /// ready, mic missing, engine busy) can never leave a phantom hands-free
@@ -150,15 +208,16 @@ Implementation notes (validated against FluidAudio 0.15.5 source — README snip
 Implementation (from research, see `ShortcutMonitor` pattern):
 - `CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap,
   eventsOfInterest: flagsChanged|keyDown)`. Callback must be trivial — flip state, dispatch to main.
-- Right ⌘: `.flagsChanged` with `keyboardEventKeycode == 54`; pressed iff
-  `event.flags.rawValue & 0x10 != 0` (NX_DEVICERCMDKEYMASK — do NOT use `.maskCommand`,
-  it stays set while the *left* ⌘ is held).
-- **Never** swallow `flagsChanged` (would break right-⌘ combos). The ONLY event ever swallowed:
+- Trigger key: `.flagsChanged` with `keyboardEventKeycode == key.keyCode`; pressed iff
+  `event.flags.rawValue & key.flagMask != 0` (device-dependent bit — do NOT use
+  `.maskCommand`/`.maskAlternate` etc., they stay set while the *left* sibling is held).
+- **Never** swallow `flagsChanged` (would break the key's combos). The ONLY event ever swallowed:
   `keyDown` keyCode 53 (Esc) while `setRecordingActive(true)` → `onCancel` + return nil.
-- Combo guard: a non-modifier `keyDown` within 1.0 s of right-⌘ press while held → `onCancel`
-  (the user was typing ⌘C etc.), do not swallow it.
+- Combo guard: a non-modifier `keyDown` within 1.0 s of the trigger press while held → `onCancel`
+  (the user was typing ⌘C, or fn+arrow when the key is Globe), do not swallow it. The
+  `modifierKeyCodes` 54…63 range covers all four trigger keycodes.
 - Hybrid mode: press → `onBegin`. Release after ≥ 0.5 s → `onEnd` (push-to-talk). Release
-  < 0.5 s → keep recording hands-free; next right-⌘ press → `onEnd` (toggle).
+  < 0.5 s → keep recording hands-free; next trigger press → `onEnd` (toggle).
 - Cooldown 0.4 s between session starts. Use `ProcessInfo.processInfo.systemUptime` for timing.
 - Re-arm on `.tapDisabledByTimeout` / `.tapDisabledByUserInput` (reset pressed state!) + a 5 s
   watchdog Timer checking `CGEvent.tapIsEnabled`.
@@ -175,6 +234,11 @@ final class MicrophoneCapture: @unchecked Sendable {
     enum CaptureError: Error { case noInputDevice, invalidFormat, engineStartFailed }
     /// Visible level 0…1, called on an arbitrary thread at buffer rate.
     var onLevel: (@Sendable (Float) -> Void)?
+    /// Converted 16 kHz mono chunk, called on the audio thread at buffer rate —
+    /// exactly the samples appended to the utterance (same generation guard as
+    /// `onLevel`). Set once at wiring time; mutating it while the engine runs
+    /// would race the tap thread.
+    var onChunk: (@Sendable ([Float]) -> Void)?
     /// Start/stop once at launch to prime CoreAudio & surface the mic permission early.
     func warmUp()
     func start(deviceUID: String?) throws
@@ -249,6 +313,34 @@ pasteboard still holds our session (string matches AND marker matches). Check
 ```
 In-memory only (privacy) — no disk persistence.
 
+### VocabularyStore [vocabulary] — `VocabularyStore.swift`
+
+```swift
+struct VocabularyRule: Identifiable, Codable, Equatable {
+    let id: UUID
+    var phrase: String        // what the engine heard
+    var replacement: String   // what to insert instead
+}
+
+@MainActor final class VocabularyStore: ObservableObject {
+    @Published var rules: [VocabularyRule]   // persisted as JSON to UserDefaults ("vocabularyRules")
+    init(defaults: UserDefaults = .standard)
+    /// Rewrites every transcription before insertion.
+    func apply(to text: String) -> String
+}
+```
+
+`apply(to:)` does one non-overlapping left-to-right pass. Rules are ordered longest
+phrase first (ICU alternation is ordered, not longest-match) so the longest phrase wins
+at a shared position; text a rule already wrote is never re-matched. Boundaries are
+Unicode letter/number lookarounds `(?<![\p{L}\p{N}])…(?![\p{L}\p{N}])` (not `\b`, which
+misbehaves around non-ASCII), the phrase is regex-escaped, internal whitespace becomes
+`\s+`, case-insensitive. Casing: a replacement containing any uppercase is used verbatim;
+an all-lowercase replacement adapts its first letter to the matched occurrence. An empty
+replacement deletes the phrase, then doubled spaces are collapsed and the result trimmed.
+Blank phrases are ignored. `DictationController.finishTranscription` calls it before the
+empty-check, so an all-deleted result takes the "Didn't catch that." path.
+
 ### HUDController [hud] — `HUDController.swift`
 
 ```swift
@@ -263,6 +355,12 @@ enum HUDState: Equatable {
     init(settings: SettingsStore)
     func show(_ state: HUDState)   // creates/orders the panel if needed, animates state change
     func setLevel(_ level: Float)  // 0…1 mic level, forwarded to the waveform
+    /// Live transcript beside the waveform (recording) / dots (transcribing);
+    /// nil clears it. ~1/s, so it goes through the observable model (unlike
+    /// `setLevel`); the capsule's width springs up to Theme.hudPartialMaxWidth,
+    /// showing the tail of the text (leading truncation), confirmed in primary,
+    /// volatile in secondary.
+    func setPartial(_ partial: PartialTranscript?)
     func hide()                    // animate out, then orderOut
 }
 ```
@@ -290,7 +388,8 @@ The view drives real actions: `Permissions.*`, `app.controller.prepareEngine()`,
 ## Core pieces (owner: core — already written, read them before implementing)
 
 - `SettingsStore`: `@MainActor ObservableObject`, `@Published` properties persisted to
-  UserDefaults: `hotkeyMode`, `playSounds`, `hapticFeedback`, `restoreClipboard`,
+  UserDefaults: `hotkeyMode`, `dictationKey` (`DictationKey`, default `.rightCommand`),
+  `playSounds`, `hapticFeedback`, `restoreClipboard`,
   `languageHint` ("auto"), `inputDeviceUID` (""), `hudPosition` (.bottomCenter/.topCenter),
   `keepMicWarm`, `launchAtLogin`, `onboardingCompleted`, `dictationEnabled`.
 - `Permissions`: static helpers — `microphoneGranted`, `requestMicrophone() async -> Bool`,
@@ -304,6 +403,8 @@ The view drives real actions: `Permissions.*`, `app.controller.prepareEngine()`,
   `modelState: ModelState { unknown, needsDownload, downloading(ModelDownloadProgress), ready,
   failed(String) }` (`@Published`), `userIssue: UserIssue?` (`@Published`, last actionable
   problem for the menu bar/HUD), `lastInsertedText: String?`,
+  `partialTranscript: PartialTranscript?` (`@Published`, live transcript of the dictation in
+  flight, vocabulary applied, nil whenever none is running),
   `activate()` (start hotkey + prepare engine), `deactivate()`,
   `prepareEngine(force: Bool = false)` (force re-runs even when `.ready` — Settings
   Re-download), `setDictationEnabled(_:)`, `startDictation() -> Bool` (false when the begin
@@ -311,6 +412,15 @@ The view drives real actions: `Permissions.*`, `app.controller.prepareEngine()`,
   `stopDictationAndTranscribe()`, `cancelDictation()`. Transcription runs under a timeout
   (`max(30 s, 4×audio + 5 s)`) so a wedged engine can never leave the app stuck in
   `.transcribing`.
+  Streaming: `startDictation` also opens a best-effort streaming session (mic `onChunk` →
+  session; partials hop to the main actor, drop when the recordingID is stale, get vocabulary
+  applied, and land in `partialTranscript` + `hud.setPartial`). The final text is dual-path:
+  language "auto" → `session.finish()` (near-zero latency; any throw / suspiciously empty
+  result falls back to batch); pinned language → session cancelled, batch only (the sliding
+  window API can't pin, so partials may differ slightly from the final). Every terminal path
+  cancels the session and clears `partialTranscript`; a <0.35 s recording cancels it silently.
+  The full-utterance sample buffer remains the batch input and fallback — streaming failures
+  must never break dictation.
 
 ## Concurrency rules
 

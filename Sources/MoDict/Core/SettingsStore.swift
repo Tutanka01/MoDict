@@ -14,6 +14,9 @@ final class SettingsStore: ObservableObject {
     @Published var hotkeyMode: HotkeyMonitor.Mode {
         didSet { defaults.set(hotkeyMode.rawValue, forKey: "hotkeyMode") }
     }
+    @Published var dictationKey: DictationKey {
+        didSet { defaults.set(dictationKey.rawValue, forKey: "dictationKey") }
+    }
     @Published var playSounds: Bool {
         didSet { defaults.set(playSounds, forKey: "playSounds") }
     }
@@ -65,6 +68,7 @@ final class SettingsStore: ObservableObject {
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         hotkeyMode = HotkeyMonitor.Mode(rawValue: defaults.string(forKey: "hotkeyMode") ?? "") ?? .hybrid
+        dictationKey = DictationKey(rawValue: defaults.string(forKey: "dictationKey") ?? "") ?? .rightCommand
         playSounds = defaults.object(forKey: "playSounds") as? Bool ?? true
         hapticFeedback = defaults.object(forKey: "hapticFeedback") as? Bool ?? true
         restoreClipboard = defaults.object(forKey: "restoreClipboard") as? Bool ?? true
