@@ -96,6 +96,32 @@ struct VocabularyStoreTests {
         #expect(store.apply(to: "unchanged text") == "unchanged text")
     }
 
+    @Test
+    func unaccentedRuleMatchesAccentedOccurrence() {
+        let store = makeStore(rules: [VocabularyRule(phrase: "resume", replacement: "curriculum")])
+
+        #expect(store.apply(to: "mon résumé est prêt") == "mon curriculum est prêt")
+        #expect(store.apply(to: "le resume") == "le curriculum")
+    }
+
+    @Test
+    func accentedRuleMatchesUnaccentedOccurrence() {
+        let store = makeStore(rules: [VocabularyRule(phrase: "déjà", replacement: "DEJA")])
+
+        #expect(store.apply(to: "on a deja fini") == "on a DEJA fini")
+        #expect(store.apply(to: "c'est déjà fait") == "c'est DEJA fait")
+    }
+
+    @Test
+    func accentInsensitiveMatchingKeepsWholeWordBoundaries() {
+        let store = makeStore(rules: [VocabularyRule(phrase: "cote", replacement: "Côte")])
+
+        #expect(store.apply(to: "la côte est belle") == "la Côte est belle")
+        #expect(store.apply(to: "une cote mal taillée") == "une Côte mal taillée")
+        // Must not fire inside a longer word.
+        #expect(store.apply(to: "coteau et côté") == "coteau et Côte")
+    }
+
     // MARK: Persistence
 
     @Test

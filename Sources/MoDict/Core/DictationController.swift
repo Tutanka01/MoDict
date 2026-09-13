@@ -341,11 +341,16 @@ final class DictationController: ObservableObject {
         // Live partials are best-effort: the session buffers audio from the very
         // first chunk while the recognizer spins up in the background; a start
         // failure only means no streaming preview — batch still transcribes.
-        streamingSessionBox.value = engine.startStreamingSession { [weak self] partial in
+        streamingSessionBox.value = engine.startStreamingSession(
+            languageHint: settings.languageHint
+        ) { [weak self] partial in
             Task { @MainActor [weak self] in
                 self?.handlePartial(partial, recordingID: recordingID)
             }
         }
+        // Cue before capture: on built-in speakers the chime otherwise bleeds
+        // into the first phoneme and the model hears a degraded opening word.
+        sounds.dictationStarted()
         do {
             try microphone.start(deviceUID: settings.inputDeviceUID.isEmpty ? nil : settings.inputDeviceUID)
         } catch {
@@ -361,7 +366,6 @@ final class DictationController: ObservableObject {
         userIssue = nil
         phase = .recording
         hotkey.setRecordingActive(true)
-        sounds.dictationStarted()
         return true
     }
 

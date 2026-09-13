@@ -2,11 +2,25 @@ import AVFoundation
 import FluidAudio
 import Foundation
 
-/// Parakeet-TDT 0.6B **v3** (multilingual, on-device, ANE) via FluidAudio 0.15.5.
+/// Parakeet-TDT 0.6B **v3** (multilingual, on-device, ANE) via FluidAudio 0.15.7.
 ///
 /// Signatures here were verified against the checked-out FluidAudio source, not
 /// the README/GettingStarted docs — those describe a `configure(models:)` /
 /// `transcribe(_:source:)` API that does not exist in the compiled package.
+///
+/// French quality notes (why the code below looks the way it does):
+/// - Parakeet v3 has **no language-conditioning input**. On spontaneous
+///   non-English speech it falls back to its English prior and can emit English
+///   words — sometimes a word-for-word translation (FluidAudio PR #630, NVIDIA
+///   discussion #14620). Passing `language: .french` is therefore not cosmetic:
+///   it activates the decoder's French-scoped English blocklist and the
+///   top-K script filter, measured to cut English intrusion from 31% to 13% on
+///   the worst spontaneous French recordings.
+/// - Short and quiet clips drift more, so the utterance is trimmed to its
+///   speech bounds and levelled before decoding (`AudioConditioner`).
+/// - Utterances over 15 s take FluidAudio's chunked path; 0.15.7 resolves the
+///   v3 multilingual long-form path to silence-aligned, no-mel chunks by
+///   default (issue #594), so no extra config is needed for that.
 actor FluidAudioEngine: TranscriptionEngine {
 
     nonisolated let id = "fluidaudio.parakeet-v3"
@@ -52,7 +66,11 @@ actor FluidAudioEngine: TranscriptionEngine {
             let models = try await AsrModels.downloadAndLoad(version: .v3, progressHandler: { raw in
                 bridge.emit(raw)
             })
-            let manager = AsrManager(config: .default)
+            // v3 long-form already resolves to the no-mel path (issue #594);
+            // dual-decode arbitration probes that path once per long utterance
+            // and commits to the best-scoring layout, eliminating boundary
+            // stitching artifacts. Inert for the ≤15 s single-window path.
+            let manager = AsrManager(config: ASRConfig(dualDecodeArbitration: true))
             try await manager.loadModels(models)
             await self?.adopt(manager, models: models)
         }
@@ -115,22 +133,17 @@ actor FluidAudioEngine: TranscriptionEngine {
             return TranscriptionResult(text: "", confidence: 0, audioDuration: 0, processingTime: 0)
         }
 
-        // Very short clips give the TDT decoder too little acoustic context to
-        // flush its final tokens; a second of trailing silence fixes it and also
-        // clears FluidAudio's ~300 ms minimum-length guard.
-        var audio = samples
-        if audio.count < Self.silencePadThreshold {
-            audio.append(contentsOf: repeatElement(0, count: Self.silencePadSamples))
-        }
+        let language = Self.language(for: languageHint)
+        let audio = AudioConditioner.condition(samples)
+        var result = try await transcribeOnce(audio, language: language, manager: manager)
 
-        // A fresh decoder state per utterance — reusing one bleeds context
-        // between unrelated dictations.
-        var state = try TdtDecoderState()
-        let result = try await manager.transcribe(
-            audio,
-            decoderState: &state,
-            language: Self.language(for: languageHint)
-        )
+        // The conditioner trims to the detected speech bounds. If that left
+        // nothing to decode, give the untouched capture one chance before
+        // reporting "Didn't catch that" — an over-eager trim must not lose words.
+        if result.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           audio.count != samples.count {
+            result = try await transcribeOnce(samples, language: language, manager: manager)
+        }
 
         return TranscriptionResult(
             text: result.text,
@@ -140,16 +153,32 @@ actor FluidAudioEngine: TranscriptionEngine {
         )
     }
 
+    /// One decode pass. A fresh decoder state per utterance — reusing one bleeds
+    /// context between unrelated dictations.
+    private func transcribeOnce(
+        _ audio: [Float],
+        language: Language?,
+        manager: AsrManager
+    ) async throws -> ASRResult {
+        var state = try TdtDecoderState()
+        return try await manager.transcribe(audio, decoderState: &state, language: language)
+    }
+
     // MARK: Streaming
 
     nonisolated func startStreamingSession(
+        languageHint: String?,
         onPartial: @escaping @Sendable (PartialTranscript) -> Void
     ) -> StreamingTranscriptionSession? {
         // Synchronous on purpose: the session buffers chunks from the instant it
         // exists, so no leading audio is lost while the recognizer spins up on
         // the actor. Readiness is checked there; a failure degrades to
         // no-partials and `finish()` throwing into the batch fallback.
-        FluidStreamingSession(engine: self, onPartial: onPartial)
+        FluidStreamingSession(
+            engine: self,
+            language: Self.language(for: languageHint),
+            onPartial: onPartial
+        )
     }
 
     /// Called from a session's startup task: hands it a loaded sliding-window
@@ -165,25 +194,32 @@ actor FluidAudioEngine: TranscriptionEngine {
         // A fresh manager per utterance: its input AsyncStream is created once in
         // init and permanently finished by finish()/cancel(), so an instance can
         // never accept audio for a second utterance (reset() does not revive it).
-        let manager = SlidingWindowAsrManager(config: Self.streamingConfig)
+        let manager = SlidingWindowAsrManager(config: Self.streamingConfig(language: session.language))
         try await manager.loadModels(models)
         return manager
     }
 
     /// Sliding-window layout tuned for dictation. `chunkSeconds` is the real
     /// update-cadence knob — the presets' `hypothesisChunkSeconds` is never read
-    /// by the 0.15.5 processing loop, and their 11 s chunk + 2 s right context
-    /// would show nothing until 13 s of audio. 1 s chunks give ~1 update/s with
-    /// the first partial after ~2 s of speech; left 10 + chunk 1 + right 1 = 12 s
+    /// by the processing loop, and their 11 s chunk + 2 s right context would
+    /// show nothing until 13 s of audio. 1 s chunks give ~1 update/s with the
+    /// first partial after ~2 s of speech; left 10 + chunk 1 + right 1 = 12 s
     /// stays inside the model's fixed 15 s input (`ASRConstants.maxModelSamples`).
-    fileprivate static let streamingConfig = SlidingWindowAsrConfig(
-        chunkSeconds: 1.0,
-        hypothesisChunkSeconds: 1.0,
-        leftContextSeconds: 10.0,
-        rightContextSeconds: 1.0,
-        minContextForConfirmation: 10.0,
-        confirmationThreshold: 0.85
-    )
+    ///
+    /// `language` pins the preview the same way batch does (0.15.6+). The user
+    /// watches this text while speaking, so an English-looking preview reads as
+    /// "MoDict can't hear my French" even though the pasted text comes from batch.
+    fileprivate static func streamingConfig(language: Language?) -> SlidingWindowAsrConfig {
+        SlidingWindowAsrConfig(
+            chunkSeconds: 1.0,
+            hypothesisChunkSeconds: 1.0,
+            leftContextSeconds: 10.0,
+            rightContextSeconds: 1.0,
+            minContextForConfirmation: 10.0,
+            confirmationThreshold: 0.85,
+            language: language
+        )
+    }
 
     // MARK: Static surface
 
@@ -232,22 +268,42 @@ actor FluidAudioEngine: TranscriptionEngine {
     // MARK: Constants
 
     private static let sampleRate = 16_000
-    /// Clips below one second get padded.
-    private static let silencePadThreshold = 16_000
-    /// One second of trailing silence.
-    private static let silencePadSamples = 16_000
     /// One second of silence fed to the ANE to warm it after load.
     private static let warmUpSampleCount = 16_000
 
-    /// Map a MoDict language hint onto FluidAudio's script-filter `Language`.
-    /// Only the primary subtag matters ("fr-FR" → `.french`); unknown / "auto"
-    /// yields nil, which lets the model auto-detect.
+    /// Map a MoDict language hint onto FluidAudio's `Language`.
+    /// Only the primary subtag matters ("fr-FR" → `.french`).
     // Note: unqualified `Language` — the FluidAudio module also exports a
     // `struct FluidAudio`, so `FluidAudio.Language` resolves into that struct.
-    private static func language(for hint: String?) -> Language? {
-        guard let hint, hint != "auto" else { return nil }
-        let primary = hint.lowercased().split(whereSeparator: { $0 == "-" || $0 == "_" }).first.map(String.init) ?? hint.lowercased()
-        return Language(rawValue: primary)
+    static func language(for hint: String?) -> Language? {
+        guard let code = resolvedLanguageCode(for: hint) else { return nil }
+        return Language(rawValue: code)
+    }
+
+    /// Resolve which language code to feed the decoder.
+    ///
+    /// An explicit hint always wins. `nil` / empty / `"auto"` falls back to the
+    /// Mac's preferred language when Parakeet knows it, because the model has no
+    /// language prompt and its English prior wins on short utterances: leaving
+    /// `language: nil` also disables FluidAudio's French English-blocklist
+    /// entirely. English resolves to nil on purpose — the model is already
+    /// English-biased, so a hint would only add top-K work per token.
+    static func resolvedLanguageCode(
+        for hint: String?,
+        preferredLanguages: [String] = Locale.preferredLanguages
+    ) -> String? {
+        let explicit = (hint?.isEmpty == false) && hint != "auto"
+        let requested = explicit ? hint : preferredLanguages.first
+        guard let requested,
+              let primary = requested
+                  .lowercased()
+                  .split(whereSeparator: { $0 == "-" || $0 == "_" })
+                  .first
+                  .map(String.init),
+              primary != "en",
+              Language(rawValue: primary) != nil
+        else { return nil }
+        return primary
     }
 }
 
@@ -260,6 +316,9 @@ actor FluidAudioEngine: TranscriptionEngine {
 /// `AVAudioPCMBuffer` — to the actor-isolated `streamAudio`. A single ordered
 /// consumer preserves chunk order; a `Task {}` per chunk would not.
 private final class FluidStreamingSession: StreamingTranscriptionSession, @unchecked Sendable {
+
+    /// Resolved once at key-down and reused by `attachStreamingManager`.
+    let language: Language?
 
     private let onPartial: @Sendable (PartialTranscript) -> Void
     private let chunkContinuation: AsyncStream<[Float]>.Continuation
@@ -274,7 +333,10 @@ private final class FluidStreamingSession: StreamingTranscriptionSession, @unche
     private var fedSampleCount = 0
     private var lastConfidence: Float = 1
 
-    init(engine: FluidAudioEngine, onPartial: @escaping @Sendable (PartialTranscript) -> Void) {
+    init(engine: FluidAudioEngine,
+         language: Language?,
+         onPartial: @escaping @Sendable (PartialTranscript) -> Void) {
+        self.language = language
         self.onPartial = onPartial
         let (chunks, continuation) = AsyncStream<[Float]>.makeStream()
         self.chunkContinuation = continuation

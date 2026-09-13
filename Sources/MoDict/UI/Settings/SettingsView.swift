@@ -274,7 +274,7 @@ private struct SettingsDictationTab: View {
             } header: {
                 Text("Input")
             } footer: {
-                Text("Automatic detects the spoken language for each utterance.")
+                Text("Automatic follows your Mac's language when MoDict supports it. Pinning the language you speak helps MoDict avoid decoding in another one.")
             }
 
             Section {

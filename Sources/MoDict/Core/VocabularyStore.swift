@@ -55,7 +55,7 @@ final class VocabularyStore: ObservableObject {
         for rule in active {
             let phrase = rule.phrase.trimmingCharacters(in: .whitespacesAndNewlines)
             let tokens = phrase.split(whereSeparator: { $0.isWhitespace })
-                .map { NSRegularExpression.escapedPattern(for: String($0)) }
+                .map { Self.pattern(for: String($0)) }
             // Internal whitespace matches any single run of whitespace in the text.
             groupPatterns.append("(" + tokens.joined(separator: "\\s+") + ")")
             groupRules.append(rule)
@@ -101,6 +101,60 @@ final class VocabularyStore: ObservableObject {
             result = result.trimmingCharacters(in: .whitespacesAndNewlines)
         }
         return result
+    }
+
+    /// Latin letters with their common accented variants. A rule typed without
+    /// accents ("resume") still matches "résumé" and vice versa — French ASR
+    /// occasionally drops or adds accents, and users rarely type both forms.
+    /// Classes are explicit rather than folded at match time because folding the
+    /// haystack can change its length ("œ" → "oe") and invalidate replacement
+    /// ranges.
+    private static let accentClasses: [String: String] = [
+        "a": "aàáâãäåāăą",
+        "c": "cçćĉċč",
+        "d": "dďđ",
+        "e": "eèéêëēĕėęě",
+        "g": "gĝğġģ",
+        "i": "iìíîïĩīĭįı",
+        "l": "lĺļľł",
+        "n": "nñńņň",
+        "o": "oòóôõöøōŏő",
+        "r": "rŕŗř",
+        "s": "sśŝşšș",
+        "t": "tţťț",
+        "u": "uùúûüũūŭůűų",
+        "y": "yýÿŷ",
+        "z": "zźżž",
+    ]
+
+    /// Every base letter *and* every accented variant maps to the same class,
+    /// so the rule and the transcript can disagree about accents in either
+    /// direction.
+    private static let classByCharacter: [String: String] = {
+        var map: [String: String] = [:]
+        for (base, variants) in accentClasses {
+            let characterClass = "[\(variants)]"
+            map[base] = characterClass
+            for character in variants {
+                map[String(character)] = characterClass
+            }
+        }
+        return map
+    }()
+
+    /// Escape a phrase token into a regex where each Latin letter also matches
+    /// its accented variants (`.caseInsensitive` covers uppercase).
+    private static func pattern(for token: String) -> String {
+        var pattern = ""
+        for character in token {
+            let key = String(character).lowercased()
+            if let characterClass = classByCharacter[key] {
+                pattern += characterClass
+            } else {
+                pattern += NSRegularExpression.escapedPattern(for: String(character))
+            }
+        }
+        return pattern
     }
 
     /// Any uppercase in the replacement means the user chose exact casing (use it

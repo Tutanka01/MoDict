@@ -13,6 +13,27 @@ and publishes `MoDict-X.Y.Z.dmg` on the
 - Highlight 2
 -->
 
+## v0.3.0 — 2026-09-13
+
+- French transcription overhaul: the language you pick is now pinned on the
+  live preview as well as the final pass, which activates FluidAudio's
+  French anti-English decoder guard. Long dictations no longer drift into
+  English at window boundaries, and short utterances are decoded with the
+  same language context everywhere.
+- "Automatic" now follows your Mac's language when MoDict supports it;
+  picking a language explicitly still wins.
+- Audio conditioning before transcription: utterances are trimmed to their
+  speech bounds instead of padding with digital silence, quiet recordings
+  are lifted with a peak-guarded gain, and DC/rumble below 60 Hz is removed.
+  If a trim ever leaves nothing to decode, the untouched take is retried.
+- The recording cue plays before the microphone opens, so the first word is
+  no longer captured together with the chime, and the last audio buffer is
+  drained at key release instead of being cut off.
+- Vocabulary rules now match across accents in both directions, so a rule
+  typed without accents still catches "résumé" (and vice versa).
+- Dependency: FluidAudio 0.15.7. Also raises the input converter to the
+  highest-quality profile.
+
 ## v0.2.0 — 2026-07-13
 
 - Live transcription in the HUD: the composition card shows a rolling

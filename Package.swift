@@ -40,7 +40,7 @@ let package = Package(
     dependencies: [
         // Pre-1.0 SDK: the ASR API changes between minor versions. Bump deliberately,
         // re-checking signatures against the checked-out sources (see Docs/ARCHITECTURE.md).
-        .package(url: "https://github.com/FluidInference/FluidAudio.git", exact: "0.15.5")
+        .package(url: "https://github.com/FluidInference/FluidAudio.git", exact: "0.15.7")
     ],
     targets: [
         .executableTarget(

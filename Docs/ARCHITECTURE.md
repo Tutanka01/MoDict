@@ -5,7 +5,7 @@ transcribes on the Neural Engine → text is inserted at the cursor of whatever 
 
 - Target: macOS 14+, Apple Silicon. Swift 6 toolchain, **language mode v5** (see Concurrency).
 - Build: pure SwiftPM + Command Line Tools (no Xcode). `make` assembles the `.app` bundle.
-- STT: [FluidAudio](https://github.com/FluidInference/FluidAudio) `exact: 0.15.5`,
+- STT: [FluidAudio](https://github.com/FluidInference/FluidAudio) `exact: 0.15.7`,
   Parakeet-TDT 0.6B **v3** (multilingual, ~482 MB download, ANE).
 - No sandbox (CGEvent posting + global key monitoring are incompatible with it).
 
@@ -110,14 +110,17 @@ protocol TranscriptionEngine: Actor {
     /// Downloads (if needed) and loads the model. Reports progress on arbitrary threads.
     func prepare(progress: @escaping @Sendable (ModelDownloadProgress) -> Void) async throws
     var isReady: Bool { get async }
-    /// languageHint: BCP-47-ish code like "en" / "fr", nil = automatic.
+    /// languageHint: BCP-47-ish code like "en" / "fr", nil/"auto" = the Mac's
+    /// language when the model supports it, otherwise model detection.
     func transcribe(_ samples: [Float], languageHint: String?) async throws -> TranscriptionResult
     /// Begin a streaming session (nil = engine can't stream at all). Synchronous
     /// so the session buffers audio from the first mic chunk; the recognizer
     /// spins up in the background and any failure degrades to no partials.
     /// `onPartial` fires on arbitrary threads. A new session cancels the previous
-    /// one. Streaming always auto-detects language — only batch honors a pin.
+    /// one. `languageHint` pins the preview exactly like batch (since
+    /// FluidAudio 0.15.6 the sliding-window path accepts a language).
     nonisolated func startStreamingSession(
+        languageHint: String?,
         onPartial: @escaping @Sendable (PartialTranscript) -> Void
     ) -> StreamingTranscriptionSession?
     func unload() async
@@ -139,23 +142,30 @@ actor FluidAudioEngine: TranscriptionEngine {
 }
 ```
 
-Implementation notes (validated against FluidAudio 0.15.5 source — README snippets are WRONG):
-- `AsrModels.downloadAndLoad(version: .v3, progressHandler:)` → `AsrManager(config: .default)`,
-  `try await asr.loadModels(models)`.
-- `transcribe`: create a **fresh** `TdtDecoderState` per utterance
-  (`try TdtDecoderState()`), call
-  `asr.transcribe(samples, decoderState: &state, language: mapped)`.
-- Map `languageHint` string → FluidAudio's language type; check the real API in the checked-out
-  sources (`.build/checkouts/FluidAudio/Sources/FluidAudio/...`) before writing code.
-- Pad clips shorter than ~1 s with trailing silence (16 000 zero samples) before transcribing.
+Implementation notes (validated against FluidAudio 0.15.7 source — README snippets are WRONG):
+- `AsrModels.downloadAndLoad(version: .v3, progressHandler:)` →
+  `AsrManager(config: ASRConfig(dualDecodeArbitration: true))`, `try await asr.loadModels(models)`.
+  v3 long-form already resolves to the no-mel, silence-aligned path by default in 0.15.7
+  (issue #594); the arbitration flag only affects utterances over 15 s.
+- `transcribe`: condition the capture first (`AudioConditioner` trims to speech bounds and
+  lifts quiet audio; never append digital silence — NVIDIA NeMo #15757), then create a
+  **fresh** `TdtDecoderState` per utterance (`try TdtDecoderState()`) and call
+  `asr.transcribe(audio, decoderState: &state, language: mapped)`. If a nonzero trim
+  produced empty text, retry the untouched buffer once.
+- Language mapping: `resolvedLanguageCode(for:preferredLanguages:)` — explicit hint wins;
+  nil/empty/"auto" → the Mac's preferred language when Parakeet supports it, English and
+  unsupported codes → nil (model detection). This is what activates the French
+  English-blocklist; `language: nil` disables it entirely. Check the real API in the
+  checked-out sources (`.build/checkouts/FluidAudio/Sources/FluidAudio/...`) before writing code.
 - Do not let two `prepare()` calls download twice (share the in-flight Task).
 - Streaming: `prepare` retains the loaded `AsrModels`; each session gets a **fresh**
   `SlidingWindowAsrManager` sharing them (`loadModels(_:)` is reference assignment only) —
   the manager's input `AsyncStream` is built once in its `init` and permanently finished by
   `finish()`/`cancel()`, so an instance can never stream a second utterance (`reset()` does
   not revive it). Cadence knob is `chunkSeconds` (the presets' `hypothesisChunkSeconds` is
-  never read in 0.15.5); MoDict uses left 10 + chunk 1 + right 1 = 12 s ≤ the model's 15 s
-  input. Chunk ordering: tap thread → session-local `AsyncStream` (sync yield) → one pump
+  never read); MoDict uses left 10 + chunk 1 + right 1 = 12 s ≤ the model's 15 s
+  input, with `config.language` pinned from the same hint as batch (0.15.6+). Chunk ordering:
+  tap thread → session-local `AsyncStream` (sync yield) → one pump
   task → actor-isolated `streamAudio`. Never a `Task {}` per chunk (unordered).
 - After load, before reporting ready, run one throwaway transcription of 1 s of silence to
   pay CoreML's one-time ANE placement cost off the user's first dictation. The bar stays at
@@ -393,7 +403,8 @@ The view drives real actions: `Permissions.*`, `app.controller.prepareEngine()`,
 - `SettingsStore`: `@MainActor ObservableObject`, `@Published` properties persisted to
   UserDefaults: `hotkeyMode`, `dictationKey` (`DictationKey`, default `.rightCommand`),
   `playSounds`, `hapticFeedback`, `restoreClipboard`,
-  `languageHint` ("auto"), `inputDeviceUID` (""), `hudPosition`
+  `languageHint` ("auto" = the Mac's language when supported, else model detection),
+  `inputDeviceUID` (""), `hudPosition`
   (.nearPointer/.bottomCenter/.topCenter, near-pointer default + one-time migration),
   `keepMicWarm`, `launchAtLogin`, `onboardingCompleted`, `dictationEnabled`.
 - `Permissions`: static helpers — `microphoneGranted`, `requestMicrophone() async -> Bool`,
@@ -419,7 +430,8 @@ The view drives real actions: `Permissions.*`, `app.controller.prepareEngine()`,
   Streaming: `startDictation` opens a best-effort preview session (mic `onChunk` → session;
   `StreamingTranscriptAssembler` merges overlapping hypotheses into a cumulative document;
   updates hop to the main actor, drop when the recordingID is stale, get vocabulary applied,
-  and land in `partialTranscript` + `hud.setPartial`). It is never authoritative.
+  and land in `partialTranscript` + `hud.setPartial`). It is never authoritative. The session
+  receives the same language hint as batch so the preview cannot drift into English.
   On stop, the session is cancelled and the full captured utterance is transcribed once through
   batch (which also honors a pinned language). `TranscriptSanitizer` then removes only adjacent
   duplicated spans of 5+ words before vocabulary and insertion. Every terminal path

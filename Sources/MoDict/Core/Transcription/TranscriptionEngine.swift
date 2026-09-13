@@ -53,9 +53,10 @@ protocol TranscriptionEngine: Actor {
     /// very first microphone chunk; the actual recognizer spins up in the
     /// background and a failure there degrades to no partials (`finish()` then
     /// throws). `onPartial` is delivered on arbitrary threads. Starting a new
-    /// session cancels a previous live one. Streaming always auto-detects the
-    /// language — only the batch path honors a pinned language.
+    /// session cancels a previous live one. `languageHint` pins the preview the
+    /// same way batch does ("auto" resolves to the Mac's language when supported).
     nonisolated func startStreamingSession(
+        languageHint: String?,
         onPartial: @escaping @Sendable (PartialTranscript) -> Void
     ) -> StreamingTranscriptionSession?
     func unload() async

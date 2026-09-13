@@ -115,14 +115,18 @@ final class MicrophoneCapture: @unchecked Sendable {
         }
     }
 
-    /// Stop recording and return the accumulated utterance.
+    /// Stop recording and return the accumulated utterance. Takes a short drain
+    /// pause so a tap buffer in flight at release still lands in the utterance:
+    /// `removeTap` does not join an in-flight callback, and that buffer is up to
+    /// ~85 ms (one 4096-frame hardware buffer at 48 kHz) — without the pause the
+    /// final phoneme can be cut off.
     func stop() -> [Float] {
-        teardown(returningSamples: true)
+        teardown(returningSamples: true, drainInFlight: true)
     }
 
     /// Stop recording and discard the audio.
     func cancel() {
-        _ = teardown(returningSamples: false)
+        _ = teardown(returningSamples: false, drainInFlight: false)
     }
 
     // MARK: - Engine assembly
@@ -146,6 +150,11 @@ final class MicrophoneCapture: @unchecked Sendable {
         guard let conv = AVAudioConverter(from: inputFormat, to: targetFormat) else {
             throw CaptureError.invalidFormat
         }
+        // Highest-quality rate conversion: 48 kHz → 16 kHz is the single
+        // unavoidable DSP step of every utterance, so let Apple spend the
+        // cycles instead of leaving the converter at its default profile.
+        conv.sampleRateConverterQuality = .max
+        conv.sampleRateConverterAlgorithm = AVSampleRateConverterAlgorithm_Mastering
         lock.lock()
         converter = conv
         lock.unlock()
@@ -166,8 +175,21 @@ final class MicrophoneCapture: @unchecked Sendable {
     }
 
     @discardableResult
-    private func teardown(returningSamples: Bool) -> [Float] {
+    private func teardown(returningSamples: Bool, drainInFlight: Bool) -> [Float] {
         removeConfigObserver()
+
+        if drainInFlight {
+            lock.lock()
+            let running = isRecording
+            lock.unlock()
+            if running {
+                // Stop new buffers first, then give the in-flight one time to
+                // finish appending (isRecording stays true for it; no new tap
+                // callback can start after removeTap).
+                engine.inputNode.removeTap(onBus: 0)
+                Thread.sleep(forTimeInterval: 0.1)
+            }
+        }
 
         lock.lock()
         let wasRecording = isRecording
@@ -178,7 +200,7 @@ final class MicrophoneCapture: @unchecked Sendable {
         converter = nil
         lock.unlock()
 
-        if wasRecording {
+        if wasRecording && !drainInFlight {
             engine.inputNode.removeTap(onBus: 0)
         }
         engine.stop()

@@ -22,7 +22,9 @@ superwhisper, built to disappear until you need it.
   [FluidAudio](https://github.com/FluidInference/FluidAudio) and CoreML on the ANE.
   Short utterances transcribe in tens of milliseconds after you release the key —
   no round trip, no 1–2 second cloud lag.
-- **25 languages.** Parakeet v3 is multilingual; pick one or let MoDict detect it.
+- **25 languages.** Parakeet v3 is multilingual; pick one or let MoDict follow your
+  Mac's language. Pinning the language you speak keeps short utterances from being
+  decoded as another language.
 - **It stays out of the way.** A small three-line composition preview appears near your
   pointer and vanishes the instant the text lands. No dashboard, no Dock icon —
   just a menu bar glyph.
