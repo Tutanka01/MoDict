@@ -4,12 +4,18 @@ import AppKit
 @main
 struct MoDictApp: App {
     /// Bundle check hook (see scripts/verify-bundle.sh): `MODICT_LAUNCH_CHECK=1`
-    /// exits the moment dyld has resolved every library. Because dyld runs
-    /// before any Swift code, reaching this point proves the packaged app can
-    /// actually start — it never touches the UI, permissions, or the network.
+    /// exits the moment dyld has resolved every library and MLX has run one real
+    /// kernel. Because dyld and MLX both run before any UI, reaching this point
+    /// proves the packaged app can actually start and transcribe — it never
+    /// touches the UI, permissions, the model, or the network.
     init() {
         if ProcessInfo.processInfo.environment["MODICT_LAUNCH_CHECK"] == "1" {
-            print("MODICT_LAUNCH_CHECK: ok")
+            let sum = QwenAudioEngine.runtimeSmokeTest()
+            guard sum == 9 else {
+                print("MODICT_LAUNCH_CHECK: MLX smoke test failed (sum=\(sum), expected 9)")
+                exit(EXIT_FAILURE)
+            }
+            print("MODICT_LAUNCH_CHECK: ok (dyld + MLX)")
             exit(EXIT_SUCCESS)
         }
     }

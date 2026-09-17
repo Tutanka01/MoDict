@@ -13,6 +13,16 @@ and publishes `MoDict-X.Y.Z.dmg` on the
 - Highlight 2
 -->
 
+## v0.4.1 — 2026-09-17
+
+- Fixed the v0.4.0 download: its app could not initialize the MLX runtime
+  ("Failed to load the default metallib"), so Qwen3-ASR dictation failed even
+  though the model had downloaded correctly. The bundle now ships MLX's Metal
+  kernel library, and both CI workflows run a real MLX kernel on the packaged
+  app before it can be published. Parakeet v3 was unaffected.
+- The v0.4.0 release page was withdrawn; this is the same feature release with
+  a working Qwen3-ASR runtime.
+
 ## v0.4.0 — 2026-09-17
 
 - New default speech model: **Qwen3-ASR 1.7B** (4-bit, running locally through

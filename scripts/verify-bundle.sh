@@ -13,8 +13,10 @@
 #      framework ("mapping process and mapped file (non-platform) have
 #      different Team IDs") unless the bundle carries
 #      com.apple.security.cs.disable-library-validation.
-#   3. default.metallib missing from the embedded Cmlx.framework: the app
-#      launches but MLX cannot run kernels.
+#   3. MLX's Metal kernel library missing: with a framework build from inside
+#      Cmlx.framework, with a static link from the executable's own directory
+#      (mlx.metallib / Resources/default.metallib). Without it MLX throws
+#      "Failed to load the default metallib" on the first kernel.
 #   4. Info.plist drifting from the Makefile version.
 #
 # usage: scripts/verify-bundle.sh [--launch-check] <path/to/MoDict.app> [version]
@@ -71,7 +73,10 @@ frameworks_dir="$app/Contents/Frameworks"
 embedded=$(ls "$frameworks_dir" 2>/dev/null | grep -E '\.framework$|\.dylib$' || true)
 
 if [ -n "$embedded" ]; then
-    otool -l "$executable" | grep -q "@executable_path/../Frameworks" || \
+    # grep -c, not grep -q: with `set -o pipefail`, a -q match closes the pipe
+    # early and otool dies of SIGPIPE, which would make the pipeline look failed.
+    rpath_hits=$(otool -l "$executable" | grep -c "@executable_path/../Frameworks" || true)
+    [ "${rpath_hits:-0}" -gt 0 ] || \
         fail "the executable has no @executable_path/../Frameworks rpath but the bundle embeds: $(echo "$embedded" | tr '\n' ' ')"
 fi
 
@@ -106,6 +111,20 @@ if [ -d "$frameworks_dir/Cmlx.framework" ]; then
     check "Cmlx.framework ships default.metallib"
 fi
 
+# A statically linked MLX looks for its kernel library next to the executable.
+mlx_symbols=$(nm -gU "$executable" 2>/dev/null | grep -c "_mlx_add" || true)
+if [ "${mlx_symbols:-0}" -gt 0 ]; then
+    found=""
+    for candidate in \
+        "$app/Contents/MacOS/mlx.metallib" \
+        "$app/Contents/MacOS/Resources/default.metallib" \
+        "$app/Contents/Frameworks/Cmlx.framework/Versions/A/Resources/default.metallib"; do
+        if [ -f "$candidate" ]; then found="$candidate"; fi
+    done
+    [ -n "$found" ] || fail "MLX is statically linked but the bundle ships no Metal kernel library (mlx.metallib / Resources/default.metallib); MLX throws 'Failed to load the default metallib' on the first kernel"
+    check "MLX kernel library present for the static link"
+fi
+
 # --- signature -----------------------------------------------------------------
 codesign --verify --strict --deep --verbose=2 "$app" >/dev/null 2>&1 || \
     fail "codesign --verify --strict --deep failed (run it by hand for details)"
@@ -115,12 +134,15 @@ check "signature valid (codesign --verify --strict --deep)"
 # codesign prints the flags on the CodeDirectory line, e.g.
 # "CodeDirectory ... flags=0x10002(adhoc,runtime) ...".
 signature_flags=$(codesign -dv --verbose=4 "$app" 2>&1 | grep -m1 'flags=' || true)
-if [ -n "$embedded" ] && printf '%s' "$signature_flags" | grep -q 'runtime'; then
+hardened=0
+case "$signature_flags" in *runtime*) hardened=1 ;; esac
+if [ -n "$embedded" ] && [ "$hardened" = "1" ]; then
     entitlements=$(codesign -d --entitlements - "$app" 2>/dev/null \
         || codesign -d --entitlements :- "$app" 2>/dev/null || true)
-    printf '%s' "$entitlements" | grep -q 'disable-library-validation' || \
-        fail "a Hardened Runtime app with embedded frameworks needs com.apple.security.cs.disable-library-validation, or dyld refuses Cmlx.framework"
-    check "library validation disabled for the embedded framework"
+    case "$entitlements" in
+        *disable-library-validation*) check "library validation disabled for the embedded framework" ;;
+        *) fail "a Hardened Runtime app with embedded frameworks needs com.apple.security.cs.disable-library-validation, or dyld refuses Cmlx.framework" ;;
+    esac
 fi
 
 # --- launch check --------------------------------------------------------------
@@ -128,10 +150,11 @@ if [ "$launch_check" = "1" ]; then
     output_file=$(mktemp)
     trap 'rm -f "$output_file"' EXIT
 
-    # 15 s alarm so a build without the env hook (which would start the real app)
-    # cannot hang CI. perl ships with macOS and replaces itself via exec.
+    # 120 s alarm so a build without the env hook (which would start the real
+    # app) cannot hang CI, while leaving room for MLX's first-run JIT compile.
+    # perl ships with macOS and replaces itself via exec.
     if command -v perl >/dev/null 2>&1; then
-        if MODICT_LAUNCH_CHECK=1 perl -e 'alarm shift; exec @ARGV' 15 "$executable" >"$output_file" 2>&1; then
+        if MODICT_LAUNCH_CHECK=1 perl -e 'alarm shift; exec @ARGV' 120 "$executable" >"$output_file" 2>&1; then
             status=0
         else
             status=$?
@@ -144,9 +167,10 @@ if [ "$launch_check" = "1" ]; then
     launch_output=$(cat "$output_file")
 
     [ "$status" -eq 0 ] || fail "launch check failed (exit $status): $launch_output"
-    printf '%s' "$launch_output" | grep -q 'MODICT_LAUNCH_CHECK' || \
-        fail "launch check env hook missing or the app did not reach it: $launch_output"
-    check "launch check: dyld resolved every library"
+    case "$launch_output" in
+        *MODICT_LAUNCH_CHECK*) check "launch check: dyld + MLX runtime ok" ;;
+        *) fail "launch check env hook missing or the app did not reach it: $launch_output" ;;
+    esac
 fi
 
 echo "verify-bundle: $app is self-contained."

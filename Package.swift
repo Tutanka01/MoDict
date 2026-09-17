@@ -41,14 +41,18 @@ let package = Package(
         // Pre-1.0 SDK: the ASR API changes between minor versions. Bump deliberately,
         // re-checking signatures against the checked-out sources (see Docs/ARCHITECTURE.md).
         .package(url: "https://github.com/FluidInference/FluidAudio.git", exact: "0.15.7"),
-        .package(url: "https://github.com/soniqo/speech-swift.git", exact: "0.0.27")
+        .package(url: "https://github.com/soniqo/speech-swift.git", exact: "0.0.27"),
+        // Declared directly (speech-swift already pulls it) so the app can run an
+        // MLX runtime check from the bundle; keep the pin in sync with speech-swift.
+        .package(url: "https://github.com/ml-explore/mlx-swift", exact: "0.31.6")
     ],
     targets: [
         .executableTarget(
             name: "MoDict",
             dependencies: [
                 .product(name: "FluidAudio", package: "FluidAudio"),
-                .product(name: "Qwen3ASR", package: "speech-swift")
+                .product(name: "Qwen3ASR", package: "speech-swift"),
+                .product(name: "MLX", package: "mlx-swift")
             ],
             path: "Sources/MoDict",
             swiftSettings: [

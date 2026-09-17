@@ -1,4 +1,5 @@
 import Foundation
+import MLX
 import Qwen3ASR
 
 /// Qwen3-ASR 1.7B, quantized to 4-bit and executed locally through MLX.
@@ -102,6 +103,16 @@ actor QwenAudioEngine: TranscriptionEngine {
             .split(whereSeparator: { $0 == "-" || $0 == "_" })
             .first
             .map(String.init)
+    }
+
+    /// Bundle guard rail, not a user code path: runs one real MLX operation
+    /// (device init + a Metal kernel, or a JIT compile when the build ships no
+    /// metallib). `scripts/verify-bundle.sh` calls this from a packaged app to
+    /// prove the shipped bundle can actually execute MLX — a missing kernel
+    /// library or framework only shows up at runtime otherwise.
+    static func runtimeSmokeTest() -> Int {
+        // Int32 keeps `item` an exact conversion: (1+1) + (2+1) + (3+1) = 9.
+        Int((MLXArray([1, 2, 3]) + 1).sum().item(Int32.self))
     }
 }
 
