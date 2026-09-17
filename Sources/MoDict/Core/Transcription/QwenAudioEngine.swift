@@ -111,10 +111,10 @@ actor QwenAudioEngine: TranscriptionEngine {
     /// `scripts/verify-bundle.sh` calls this from the built bundle; a missing or
     /// mismatched kernel library only shows up at runtime otherwise.
     static func runtimeSmokeTest() -> (reduction: Int, matmul: Int) {
-        let reduction = Int((MLXArray([1, 2, 3]) + 1).sum().item(Int32.self))
-        let matrix = MLXArray([1, 2, 3, 4]).reshaped(2, 2)
-        let identity = MLXArray([1, 0, 0, 1]).reshaped(2, 2)
-        let matmul = Int(matrix.matmul(identity).sum().item(Int32.self))
+        let reduction = Int((MLXArray([1, 2, 3] as [Float]) + 1).sum().item(Float.self))
+        let matrix = MLXArray([1, 2, 3, 4] as [Float]).reshaped(2, 2)
+        let identity = MLXArray([1, 0, 0, 1] as [Float]).reshaped(2, 2)
+        let matmul = Int(matrix.matmul(identity).sum().item(Float.self))
         return (reduction, matmul)
     }
 }
