@@ -1,4 +1,7 @@
-# MoDict — build & packaging (Command Line Tools only, no Xcode, Apple Silicon).
+# MoDict — build & packaging (SwiftPM + the full Xcode toolchain, Apple Silicon).
+#
+# Xcode (not just the Command Line Tools) is required: SwiftUI's @State macro
+# plugin ships only in the Xcode toolchain. See CONTRIBUTING.md.
 #
 # Common targets:
 #   make            build + bundle + sign the native arm64 app (default)
@@ -8,6 +11,8 @@
 #   make bundle     assemble build/MoDict.app from the compiled binary
 #   make sign       code-sign the bundle (stable identity, else ad-hoc + warning)
 #   make sign-adhoc force ad-hoc dev/CI signing (never a release)
+#   make verify-bundle
+#                   fail unless the signed bundle is self-contained and launches
 #   make diagnose-signature
 #                   inspect signature, entitlements and Gatekeeper posture
 #   make validate-release
@@ -24,7 +29,7 @@
 APP_NAME  := MoDict
 BUNDLE_ID := com.modict.app
 PRODUCT   := MoDict
-VERSION   := 0.3.0
+VERSION   := 0.4.0
 BUILD     ?= 1
 
 # Stable signing identity. Create it once with ./scripts/dev-cert.sh so macOS
@@ -55,6 +60,16 @@ UNIVERSAL_BIN := .build/apple/Products/Release/$(PRODUCT)
 # `make universal` overrides it with the cross-arch product path.
 BINARY ?= $(ARM64_BIN)
 
+# mlx-swift links Cmlx as a binary framework through @rpath. SwiftPM keeps it
+# next to the compiled binary and never copies it into the hand-assembled .app,
+# so `bundle` embeds it in Contents/Frameworks and adds the matching rpath.
+# Without both, the app dies in dyld before main(). `verify-bundle` guards this.
+FRAMEWORK_DIR := $(CONTENTS)/Frameworks
+CMLX_FRAMEWORK := $(firstword $(wildcard \
+	$(dir $(BINARY))Cmlx.framework \
+	$(dir $(BINARY))PackageFrameworks/Cmlx.framework \
+	.build/out/Products/Release/Cmlx.framework))
+
 ICON_SRC := Support/generate-icon.swift
 ICON_PNG := $(BUILD_DIR)/Icon-1024.png
 ICONSET  := $(BUILD_DIR)/AppIcon.iconset
@@ -66,6 +81,7 @@ DMG_STAGING := $(BUILD_DIR)/dmg-staging
 ENTITLEMENTS := Support/MoDict.entitlements
 PLIST_IN     := Support/Info.plist.in
 SIGNATURE_DIAGNOSTICS := scripts/signature-diagnostics.sh
+VERIFY_BUNDLE := scripts/verify-bundle.sh
 
 # Guard rails. Ad-hoc signing must be requested explicitly (IDENTITY=-); a
 # missing identity is always a hard error, because a silent ad-hoc fallback
@@ -74,7 +90,7 @@ SIGNATURE_DIAGNOSTICS := scripts/signature-diagnostics.sh
 ALLOW_ADHOC ?= 1
 REQUIRE_DEVELOPER_ID ?= 0
 
-.PHONY: all build test universal icon bundle sign sign-adhoc diagnose-signature validate-release validate-notarized-release developer-id notarize dmg run clean
+.PHONY: all build test universal icon bundle sign sign-adhoc verify-bundle diagnose-signature validate-release validate-notarized-release developer-id notarize dmg run clean
 .DEFAULT_GOAL := all
 
 all: sign
@@ -82,17 +98,17 @@ all: sign
 build:
 	swift build -c release $(SWIFT_FLAGS)
 
-# Command Line Tools alone cannot execute tests (no xctest host): `swift test`
-# then builds the suite but silently runs nothing. Detect that and say so
+# The full Xcode toolchain provides the xctest host and SwiftUI's macro plugin.
+# Without it, `swift test` only compiles the suite and runs nothing — say so
 # instead of pretending the suite passed. CI (full Xcode) runs them for real.
 test:
 	@if xcrun --find xctest >/dev/null 2>&1; then \
 		swift test; \
 	else \
 		swift build --build-tests && \
-		echo "warning: tests COMPILED but were NOT RUN — Command Line Tools" && \
-		echo "warning: have no xctest host. They run for real in CI (macos-26)" && \
-		echo "warning: or locally with full Xcode installed."; \
+		echo "warning: tests COMPILED but were NOT RUN - no Xcode toolchain" && \
+		echo "warning: (no xctest host, no SwiftUI macros)." && \
+		echo "warning: they run for real in CI (macos-26) or locally with Xcode installed."; \
 	fi
 
 universal:
@@ -122,7 +138,7 @@ $(ICNS): $(ICON_PNG)
 
 bundle: build icon
 	rm -rf "$(APP)"
-	mkdir -p "$(CONTENTS)/MacOS" "$(CONTENTS)/Resources"
+	mkdir -p "$(CONTENTS)/MacOS" "$(CONTENTS)/Resources" "$(FRAMEWORK_DIR)"
 	cp "$(BINARY)" "$(CONTENTS)/MacOS/$(APP_NAME)"
 	sed -e 's/@APP_NAME@/$(APP_NAME)/g' \
 	    -e 's/@BUNDLE_ID@/$(BUNDLE_ID)/g' \
@@ -131,6 +147,16 @@ bundle: build icon
 	    "$(PLIST_IN)" > "$(CONTENTS)/Info.plist"
 	printf 'APPL????' > "$(CONTENTS)/PkgInfo"
 	cp "$(ICNS)" "$(CONTENTS)/Resources/AppIcon.icns"
+	@if [ -n "$(CMLX_FRAMEWORK)" ]; then \
+		cp -R "$(CMLX_FRAMEWORK)" "$(FRAMEWORK_DIR)/"; \
+	fi
+	@if ! otool -l "$(CONTENTS)/MacOS/$(APP_NAME)" | grep -q "@executable_path/../Frameworks"; then \
+		install_name_tool -add_rpath "@executable_path/../Frameworks" "$(CONTENTS)/MacOS/$(APP_NAME)"; \
+	fi
+	@if [ -z "$(CMLX_FRAMEWORK)" ]; then \
+		echo "warning: Cmlx.framework not found next to $(BINARY) - the bundle cannot launch."; \
+		echo "warning: build first; 'make verify-bundle' will fail until this is fixed."; \
+	fi
 	@echo "Bundled $(APP)"
 
 sign: bundle
@@ -164,6 +190,14 @@ sign: bundle
 
 sign-adhoc:
 	$(MAKE) sign IDENTITY=- ALLOW_ADHOC=1
+
+# Post-signing guard rail: fail unless the bundle is self-contained (Cmlx
+# embedded, rpath present, no library-validation rejection) and its executable
+# can actually be launched by dyld. CI runs this before packaging a release;
+# run it locally after `make`. See scripts/verify-bundle.sh.
+verify-bundle:
+	@test -d "$(APP)" || { echo "error: $(APP) not found - run 'make' first."; exit 2; }
+	"$(VERIFY_BUNDLE)" --launch-check "$(APP)" "$(VERSION)"
 
 diagnose-signature:
 	"$(SIGNATURE_DIAGNOSTICS)" "$(APP)"

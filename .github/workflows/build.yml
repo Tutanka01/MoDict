@@ -28,6 +28,11 @@ jobs:
       - name: Sign (ad-hoc)
         run: make sign IDENTITY=-
 
+      # Fails if the bundle is not self-contained (Cmlx.framework, rpath,
+      # library validation) or if dyld cannot launch it.
+      - name: Verify bundle
+        run: make verify-bundle
+
       - name: Inspect binary architectures
         run: lipo -info build/MoDict.app/Contents/MacOS/MoDict
 

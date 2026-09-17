@@ -35,6 +35,11 @@ jobs:
       - name: Build, bundle, and sign (ad-hoc)
         run: make sign IDENTITY=- VERSION="$VERSION"
 
+      # Fails if the bundle is not self-contained (Cmlx.framework, rpath,
+      # library validation) or if dyld cannot launch it.
+      - name: Verify bundle
+        run: make verify-bundle VERSION="$VERSION"
+
       - name: Package DMG
         run: make dmg VERSION="$VERSION"
 
@@ -44,6 +49,7 @@ jobs:
           test -d /Volumes/MoDict-verify/MoDict.app
           test -L /Volumes/MoDict-verify/Applications
           codesign --verify --strict --deep --verbose=2 /Volumes/MoDict-verify/MoDict.app
+          MODICT_LAUNCH_CHECK=1 /Volumes/MoDict-verify/MoDict.app/Contents/MacOS/MoDict
           hdiutil detach /Volumes/MoDict-verify
 
       - name: Create GitHub Release
@@ -64,6 +70,6 @@ jobs:
                ```
 
             4. Launch MoDict — onboarding walks you through permissions and the
-               one-time speech-model download (~482 MB).
+               one-time speech-model download (~2.3 GB by default).
 
-            Requires macOS 14+ on Apple Silicon.
+            Requires macOS 15+ on Apple Silicon.

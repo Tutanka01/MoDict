@@ -13,6 +13,26 @@ and publishes `MoDict-X.Y.Z.dmg` on the
 - Highlight 2
 -->
 
+## v0.4.0 — 2026-09-17
+
+- New default speech model: **Qwen3-ASR 1.7B** (4-bit, running locally through
+  MLX) for stronger French and multilingual transcription. Fresh installs
+  download it from Hugging Face on first run (~2.3 GB); existing installs keep
+  the model they already have and download nothing unless asked.
+- **Settings → Model** now manages both models: pick the active one, download,
+  delete, or reveal it in Finder, with per-model status, size, and progress.
+  Deleting a model frees its disk space without touching your settings.
+- **Parakeet v3** stays one pick away: smaller (~482 MB), faster, runs on the
+  Neural Engine, and it is still the only model with the live transcript
+  preview in the HUD. Qwen transcribes once, after you release the key.
+- Requires **macOS 15** or later. Building from source now needs **Xcode 16+**,
+  because SwiftUI's macros only ship with the full Xcode toolchain.
+- Packaging: the app bundle now embeds the MLX runtime (`Cmlx.framework`) and
+  the matching code-signing entitlement, so the distributed `.app` starts from
+  any location, including a quarantined download.
+- Everything else is unchanged: on-device only, no telemetry, clipboard
+  restored after insert, history in memory only.
+
 ## v0.3.0 — 2026-09-13
 
 - French transcription overhaul: the language you pick is now pinned on the

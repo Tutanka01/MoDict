@@ -26,5 +26,17 @@
     <!-- Legacy alias kept for older systems. -->
     <key>com.apple.security.device.microphone</key>
     <true/>
+
+    <!--
+      The bundle embeds Cmlx.framework (the MLX binary framework linked through
+      @rpath). Under the Hardened Runtime, dyld refuses to load a non-Apple
+      library whose signing team differs from the app's, and neither an ad-hoc
+      signature nor the self-signed "MoDict Dev" identity carries a team ID —
+      the app would die in dyld before main(). This entitlement turns library
+      validation off for our own embedded framework only; every other Hardened
+      Runtime protection stays in place.
+    -->
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
 </dict>
 </plist>
