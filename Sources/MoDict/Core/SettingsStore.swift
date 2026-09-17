@@ -33,6 +33,9 @@ final class SettingsStore: ObservableObject {
     @Published var languageHint: String {
         didSet { defaults.set(languageHint, forKey: "languageHint") }
     }
+    @Published var speechModel: SpeechModel {
+        didSet { defaults.set(speechModel.rawValue, forKey: "speechModel") }
+    }
     /// Persistent CoreAudio device UID; empty string = system default.
     @Published var inputDeviceUID: String {
         didSet { defaults.set(inputDeviceUID, forKey: "inputDeviceUID") }
@@ -76,6 +79,16 @@ final class SettingsStore: ObservableObject {
         hapticFeedback = defaults.object(forKey: "hapticFeedback") as? Bool ?? true
         restoreClipboard = defaults.object(forKey: "restoreClipboard") as? Bool ?? true
         languageHint = defaults.string(forKey: "languageHint") ?? "auto"
+        if let rawModel = defaults.string(forKey: "speechModel"),
+           let savedModel = SpeechModel(rawValue: rawModel) {
+            speechModel = savedModel
+        } else {
+            // Preserve Parakeet for upgrades; only fresh installs default to Qwen.
+            let initialModel: SpeechModel = defaults.bool(forKey: "onboardingCompleted")
+                ? .parakeetV3 : .qwen3ASR1_7B
+            speechModel = initialModel
+            defaults.set(initialModel.rawValue, forKey: "speechModel")
+        }
         inputDeviceUID = defaults.string(forKey: "inputDeviceUID") ?? ""
         if defaults.bool(forKey: Self.nearPointerMigrationKey) {
             hudPosition = HUDPosition(rawValue: defaults.string(forKey: "hudPosition") ?? "") ?? .nearPointer

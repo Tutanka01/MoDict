@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import Combine
 
 /// Settings scene content. A System-Settings-style `TabView` at 460 pt wide —
 /// wide enough for the two vocabulary fields to breathe. Monochrome: standard
@@ -24,7 +25,7 @@ struct SettingsView: View {
             SettingsDictationTab(settings: settings, vocabulary: vocabulary)
                 .tabItem { Label("Dictation", systemImage: "mic") }
 
-            SettingsModelTab(controller: controller)
+            SettingsModelTab(settings: settings, controller: controller)
                 .tabItem { Label("Model", systemImage: "cpu") }
 
             SettingsAboutTab()
@@ -363,99 +364,154 @@ private struct VocabularyRuleRow: View {
 // MARK: - Model
 
 private struct SettingsModelTab: View {
+    @ObservedObject var settings: SettingsStore
     @ObservedObject var controller: DictationController
+    @State private var pendingDeletion: SpeechModel?
 
-    private static let attribution =
-        "Model: NVIDIA Parakeet-TDT 0.6B v3 (CC-BY-4.0) · Runtime: FluidAudio (Apache-2.0)"
-
-    private var isDownloading: Bool {
-        if case .downloading = controller.modelState { return true }
-        return false
-    }
-
-    private var statusText: String {
-        switch controller.modelState {
-        case .unknown:
-            return "Checking…"
-        case .needsDownload:
-            return "Not downloaded"
-        case .downloading(let progress):
-            switch progress.phase {
-            case .checking: return "Checking…"
-            case .downloading: return "Downloading \(Int((progress.fraction * 100).rounded()))%"
-            case .compiling: return "Compiling…"
-            case .ready: return "Ready"
-            }
-        case .ready:
-            return "Ready"
-        case .failed:
-            return "Download failed"
-        }
-    }
-
-    private var failureMessage: String? {
-        if case .failed(let message) = controller.modelState { return message }
-        return nil
-    }
-
-    private var downloadProgress: Double? {
-        if case .downloading(let progress) = controller.modelState { return progress.fraction }
-        return nil
-    }
-
-    private var sizeText: String {
-        let formatter = ByteCountFormatter()
-        formatter.countStyle = .file
-        formatter.allowedUnits = [.useMB]
-        return formatter.string(fromByteCount: FluidAudioEngine.approximateDownloadBytes)
+    private var selection: Binding<SpeechModel> {
+        Binding(
+            get: { settings.speechModel },
+            set: { controller.selectModel($0) }
+        )
     }
 
     var body: some View {
         Form {
             Section {
-                HStack(spacing: 12) {
-                    RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .fill(.quaternary)
-                        .frame(width: 40, height: 40)
-                        .overlay {
-                            Image(systemName: "waveform")
-                                .font(.system(size: 18, weight: .medium))
-                                .foregroundStyle(.primary)
-                        }
-
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Parakeet v3")
-                            .font(.system(size: 13, weight: .semibold))
-                        Text("\(statusText) · ≈ \(sizeText)")
-                            .font(.system(size: 12))
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer(minLength: 0)
-                }
-
-                if let progress = downloadProgress {
-                    ProgressView(value: progress)
-                }
-
-                if let failureMessage {
-                    Text(failureMessage)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                }
-
-                HStack {
-                    Button("Re-download") { controller.prepareEngine(force: true) }
-                        .disabled(isDownloading)
-                    Spacer()
-                    Button("Reveal in Finder") {
-                        NSWorkspace.shared.activateFileViewerSelecting([FluidAudioEngine.modelsDirectory])
+                Picker("Active model", selection: selection) {
+                    ForEach(SpeechModel.allCases) { model in
+                        Text(model.displayName).tag(model)
                     }
                 }
+                .disabled(controller.isManagingModel)
             } footer: {
-                Text(Self.attribution)
+                Text("Qwen3-ASR gives the best French quality. Parakeet is lighter and keeps the live transcript preview.")
+            }
+
+            Section {
+                ForEach(SpeechModel.allCases) { model in
+                    ModelManagementRow(
+                        model: model,
+                        state: controller.modelState(for: model),
+                        selected: settings.speechModel == model,
+                        actionsDisabled: controller.isManagingModel,
+                        onDownload: { controller.downloadModel(model) },
+                        onDelete: { pendingDeletion = model }
+                    )
+                }
+            } header: {
+                Text("Models")
+            } footer: {
+                Text(SpeechModel.allCases.map(\.attribution).joined(separator: "\n"))
             }
         }
         .formStyle(.grouped)
+        .confirmationDialog(
+            "Delete \(pendingDeletion?.displayName ?? "model")?",
+            isPresented: Binding(
+                get: { pendingDeletion != nil },
+                set: { if !$0 { pendingDeletion = nil } }
+            ),
+            presenting: pendingDeletion
+        ) { model in
+            Button("Delete model", role: .destructive) {
+                controller.deleteModel(model)
+                pendingDeletion = nil
+            }
+            Button("Cancel", role: .cancel) { pendingDeletion = nil }
+        } message: { model in
+            Text("This removes the local \(model.displayName) files. You can download them again later.")
+        }
+    }
+}
+
+private struct ModelManagementRow: View {
+    let model: SpeechModel
+    let state: DictationController.ModelState
+    let selected: Bool
+    let actionsDisabled: Bool
+    let onDownload: () -> Void
+    let onDelete: () -> Void
+
+    private var isInstalled: Bool {
+        if case .ready = state { return true }
+        return false
+    }
+
+    private var hasLocalFiles: Bool {
+        FileManager.default.fileExists(atPath: model.modelsDirectory.path)
+    }
+
+    private var statusText: String {
+        switch state {
+        case .unknown: "Checking…"
+        case .needsDownload: "Not downloaded"
+        case .ready: "Ready"
+        case .failed: "Download failed"
+        case .downloading(let progress):
+            switch progress.phase {
+            case .checking: "Checking…"
+            case .downloading: "Downloading \(Int((progress.fraction * 100).rounded()))%"
+            case .compiling: "Loading…"
+            case .ready: "Ready"
+            }
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 12) {
+                Image(systemName: selected ? "checkmark.circle.fill" : "waveform")
+                    .font(.system(size: 18, weight: .medium))
+                    .frame(width: 28)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(model.displayName)
+                        .font(.system(size: 13, weight: .semibold))
+                    Text("\(model.detail) · ≈ \(sizeText)")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+                Text(statusText)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+
+            if case .downloading(let progress) = state {
+                ProgressView(value: progress.fraction)
+            }
+
+            if case .failed(let message) = state {
+                Text(message)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+
+            HStack {
+                if case .downloading = state {
+                    EmptyView()
+                } else {
+                    if !isInstalled {
+                        Button("Download", action: onDownload)
+                            .disabled(actionsDisabled)
+                    }
+                    if hasLocalFiles {
+                        Spacer()
+                        Button("Delete", role: .destructive, action: onDelete)
+                            .disabled(actionsDisabled)
+                        Button("Reveal in Finder") {
+                            NSWorkspace.shared.activateFileViewerSelecting([model.modelsDirectory])
+                        }
+                    }
+                }
+            }
+        }
+        .padding(.vertical, 3)
+    }
+
+    private var sizeText: String {
+        ByteCountFormatter.string(fromByteCount: model.approximateDownloadBytes, countStyle: .file)
     }
 }
 
@@ -508,6 +564,8 @@ private struct SettingsAboutTab: View {
                 Text("FluidAudio — Apache-2.0")
                     .foregroundStyle(.secondary)
                 Text("Parakeet-TDT 0.6B v3 — CC-BY-4.0 · NVIDIA")
+                    .foregroundStyle(.secondary)
+                Text("speech-swift and Qwen3-ASR 1.7B — Apache-2.0")
                     .foregroundStyle(.secondary)
             } header: {
                 Text("Licenses")

@@ -113,7 +113,7 @@ struct OnboardingView: View {
                 onOpenInputMonitoring: openInputMonitoring
             )
         case 3:
-            OnboardingModelStep(state: controller.modelState)
+            OnboardingModelStep(model: settings.speechModel, state: controller.modelState)
         default:
             OnboardingTryItStep(text: $tryText, succeeded: tryItSucceeded,
                                 ready: allRequirementsReady, key: settings.dictationKey)
@@ -235,7 +235,7 @@ struct OnboardingView: View {
         case 3:
             // Loading is cheap when the model is already on disk — start it eagerly
             // so the bar fills and the step self-advances without a second tap.
-            if FluidAudioEngine.modelsExistOnDisk() {
+            if settings.speechModel.isDownloaded {
                 controller.prepareEngine()
             }
             maybeAutoAdvance()
@@ -601,6 +601,7 @@ private struct OnboardingPermissionCard: View {
 // MARK: - Step 4 · Speech model
 
 private struct OnboardingModelStep: View {
+    let model: SpeechModel
     let state: DictationController.ModelState
 
     var body: some View {
@@ -608,8 +609,8 @@ private struct OnboardingModelStep: View {
             symbol: isReady ? "checkmark.circle.fill" : "arrow.down.circle",
             title: "Speech model",
             message: isReady
-                ? "Parakeet v3 is ready for on-device dictation."
-                : "The speech model is required before dictation can start. Parakeet v3 · 25 languages · ~480 MB."
+                ? "\(model.displayName) is ready for on-device dictation."
+                : "The speech model is required before dictation can start. \(model.displayName) · \(model.detail) · ≈ \(sizeText)."
         ) {
             statusView
                 .frame(height: 60)
@@ -619,6 +620,10 @@ private struct OnboardingModelStep: View {
     private var isReady: Bool {
         if case .ready = state { return true }
         return false
+    }
+
+    private var sizeText: String {
+        ByteCountFormatter.string(fromByteCount: model.approximateDownloadBytes, countStyle: .file)
     }
 
     @ViewBuilder

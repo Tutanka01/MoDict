@@ -3,6 +3,17 @@ import AppKit
 
 @main
 struct MoDictApp: App {
+    /// Bundle check hook (see scripts/verify-bundle.sh): `MODICT_LAUNCH_CHECK=1`
+    /// exits the moment dyld has resolved every library. Because dyld runs
+    /// before any Swift code, reaching this point proves the packaged app can
+    /// actually start — it never touches the UI, permissions, or the network.
+    init() {
+        if ProcessInfo.processInfo.environment["MODICT_LAUNCH_CHECK"] == "1" {
+            print("MODICT_LAUNCH_CHECK: ok")
+            exit(EXIT_SUCCESS)
+        }
+    }
+
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @ObservedObject private var controller = AppModel.shared.controller
 

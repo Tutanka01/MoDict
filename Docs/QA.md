@@ -29,6 +29,7 @@ make
 make run
 make universal
 make sign IDENTITY=-
+make verify-bundle
 make diagnose-signature
 make validate-release
 make developer-id IDENTITY="Developer ID Application: <name> (<TEAMID>)"
@@ -45,8 +46,11 @@ Chemins a connaitre:
 
 - bundle QA: `build/MoDict.app`;
 - bundle id TCC/UserDefaults: `com.modict.app`;
-- entitlements: `Support/MoDict.entitlements`;
-- cache modele FluidAudio v3: `~/Library/Application Support/FluidAudio/Models/parakeet-tdt-0.6b-v3`;
+- entitlements: `Support/MoDict.entitlements` (contient
+  `com.apple.security.cs.disable-library-validation`, requis par le framework
+  MLX embarque);
+- cache modele Parakeet/FluidAudio: `~/Library/Application Support/FluidAudio/Models/parakeet-tdt-0.6b-v3`;
+- cache modele Qwen3-ASR: `~/Library/Application Support/MoDict/Models/qwen3-asr-1.7b-4bit`;
 - preferences: `~/Library/Preferences/com.modict.app.plist`.
 
 ## Preparation machine QA
@@ -61,11 +65,12 @@ tccutil reset Accessibility com.modict.app
 tccutil reset ListenEvent com.modict.app
 ```
 
-Pour retester le premier telechargement modele, supprimer seulement le dossier v3
-ci-dessous, pas tout `FluidAudio/Models` si d'autres apps FluidAudio existent:
+Pour retester le premier telechargement modele, supprimer seulement le cache du
+modele concerne, pas tout `FluidAudio/Models` si d'autres apps FluidAudio existent:
 
 ```sh
-rm -rf "$HOME/Library/Application Support/FluidAudio/Models/parakeet-tdt-0.6b-v3"
+rm -rf "$HOME/Library/Application Support/FluidAudio/Models/parakeet-tdt-0.6b-v3"   # Parakeet
+rm -rf "$HOME/Library/Application Support/MoDict/Models/qwen3-asr-1.7b-4bit"        # Qwen3-ASR
 ```
 
 Avant chaque run, enregistrer l'environnement:
@@ -97,6 +102,11 @@ security find-identity -v -p codesigning
 
 - [ ] `make clean && make sign IDENTITY=-` affiche explicitement `DEV/CI ONLY`.
 - [ ] `codesign --verify --strict --verbose=2 build/MoDict.app` passe.
+- [ ] `make verify-bundle` passe: `Contents/Frameworks/Cmlx.framework` present,
+  rpath `@executable_path/../Frameworks`, `default.metallib` dans le framework,
+  entitlement `disable-library-validation` present, et le launch check dyld OK.
+- [ ] `otool -L build/MoDict.app/Contents/MacOS/MoDict` ne liste aucun `@rpath`
+  non resolu dans le bundle.
 - [ ] `make diagnose-signature` passe avec warnings ad-hoc/Gatekeeper attendus.
 - [ ] `make validate-release` echoue en refusant l'ad-hoc, sans produire une fausse
   validation pre-prod.
@@ -165,17 +175,29 @@ security find-identity -v -p codesigning
 - [ ] Reouverture apres retrait d'une permission ou suppression du modele: onboarding
   revient sur le chemin de remediation.
 
-## Modele pret / non pret
+## Modeles (Qwen3-ASR / Parakeet v3)
 
-- [ ] Cache absent: menu bar indique preparation/download et Settings > Model indique
-  `Not downloaded` ou progression.
-- [ ] Appuyer sur droite `Cmd` avant `ready`: HUD `Model not ready yet`, aucun enregistrement,
-  aucun presse-papiers modifie.
-- [ ] Telechargement interrompu: etat `Model download failed`, bouton Retry dans menu bar
-  ou Settings, pas de crash.
-- [ ] Retry avec reseau restaure: progression reprend et finit en `Ready`.
-- [ ] Cache present: lancement suivant ne retélécharge pas, passe par checking/ready.
-- [ ] Settings > Model > Reveal in Finder ouvre le dossier modele v3.
+- [ ] Installation fraiche: `defaults delete com.modict.app`, caches absents, `make run`:
+  Qwen3-ASR est le modele actif par defaut dans Settings > Model et l'onboarding.
+- [ ] Mise a niveau d'une installation existante (preferences conservees, cache Parakeet
+  present): le modele actif reste Parakeet, aucun telechargement Qwen ne demarre tout seul.
+- [ ] Picker `Active model`: basculer vers un modele deja telecharge le charge (`Checking…`
+  puis `Ready`) et la dictee suivante utilise ce modele.
+- [ ] Basculer vers un modele absent le marque `Not downloaded`; dicter avant de le
+  telecharger affiche `Model not ready yet`, aucun enregistrement, presse-papiers intact.
+- [ ] `Download` lance le telechargement du modele de la ligne, avec progression
+  checking/downloading/compiling; un cache partiel present est reprise et non re-telecharge.
+- [ ] Telechargement interrompu: etat `Download failed`, message inline, retry possible.
+- [ ] `Delete` demande confirmation, supprime le cache du modele (et lui seul), le passe en
+  `Not downloaded` sans toucher aux preferences ni a l'autre modele.
+- [ ] Supprimer le modele actif: la dictee est indisponible avec `Model not ready yet`
+  jusqu'au re-telechargement, sans crash ni HUD bloque.
+- [ ] `Reveal in Finder` ouvre le dossier de cache du modele de la ligne.
+- [ ] Cache present: lancement suivant ne retelecharge pas, passe par checking/ready.
+- [ ] Qwen actif: le HUD n'affiche pas de transcription live (normal), le texte final arrive
+  apres le relachement. Parakeet actif: la preview live fonctionne toujours.
+- [ ] Baseline d'espace disque: ~2.3 Go pour Qwen, ~482 Mo pour Parakeet, liberes par
+  `Delete`.
 
 ## Insertion dans apps courantes
 
@@ -318,7 +340,8 @@ Avec `Restore clipboard after insert` desactive:
   ```
 
 - [ ] Pendant premier telechargement, la seule activite reseau attendue est le modele
-  FluidAudio/Hugging Face. Aucune telemetrie, aucun compte, aucun endpoint produit.
+  Hugging Face demande par l'utilisateur (Qwen3-ASR ou Parakeet). Aucune telemetrie,
+  aucun compte, aucun endpoint produit.
 - [ ] L'historique est memoire seulement: faire 5 dictees, quitter MoDict, relancer,
   l'historique est vide.
 - [ ] Preferences sans phrase dictee:
@@ -341,7 +364,7 @@ Avec `Restore clipboard after insert` desactive:
 - [ ] Le presse-papiers est restaure apres insertion si l'option est active; la phrase dictee
   ne reste pas dans `pbpaste`.
 - [ ] Aucun fichier audio brut, wav, m4a ou transcription persistante n'est cree par MoDict
-  hors cache modele FluidAudio.
+  hors caches de modeles (`FluidAudio/Models`, `MoDict/Models`).
 
 ## Rapport QA
 
@@ -354,7 +377,7 @@ Build:
 - machine:
 - signature: stable dev / ad-hoc / Developer ID
 - notarisation: oui / non / n/a
-- modele: cache present / premier download
+- modele: Qwen / Parakeet / les deux; cache present / premier download
 
 Commandes passees:
 - swift --version:
@@ -366,7 +389,7 @@ Commandes passees:
 Matrice P1:
 - TCC:
 - onboarding:
-- model ready/non-ready:
+- modeles (Qwen/Parakeet):
 - insertion apps:
 - secure input:
 - hotkey modes:

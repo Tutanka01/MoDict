@@ -150,6 +150,8 @@ final class DictationController: ObservableObject {
 
     @Published private(set) var phase: Phase = .idle
     @Published private(set) var modelState: ModelState = .unknown
+    @Published private(set) var modelStates: [SpeechModel: ModelState] = [:]
+    @Published private(set) var isManagingModel = false
     @Published private(set) var userIssue: UserIssue?
     @Published private(set) var lastInsertedText: String?
     /// Live transcript of the dictation in flight (vocabulary already applied);
@@ -162,7 +164,8 @@ final class DictationController: ObservableObject {
 
     private let hotkey: HotkeyMonitor
     private let microphone: MicrophoneCapture
-    private let engine: FluidAudioEngine
+    private let fluidAudioEngine: FluidAudioEngine
+    private let qwenAudioEngine: QwenAudioEngine
     private let inserter: TextInserter
     private let hud: HUDController
     private let sounds: SoundFeedback
@@ -178,7 +181,6 @@ final class DictationController: ObservableObject {
     /// queued main-actor hops) must not overwrite it while insertion runs.
     private var partialSettled = false
     private var recordingStartedAt: TimeInterval = 0
-    private var prepareTask: Task<Void, Never>?
     private var transcriptionTask: Task<Void, Never>?
     private var hideTask: Task<Void, Never>?
     private var workspaceObserver: NSObjectProtocol?
@@ -194,10 +196,15 @@ final class DictationController: ObservableObject {
         self.vocabulary = vocabulary
         self.hotkey = HotkeyMonitor()
         self.microphone = MicrophoneCapture()
-        self.engine = FluidAudioEngine()
+        self.fluidAudioEngine = FluidAudioEngine()
+        self.qwenAudioEngine = QwenAudioEngine()
         self.inserter = TextInserter(settings: settings)
         self.hud = HUDController(settings: settings)
         self.sounds = SoundFeedback(settings: settings)
+        self.modelStates = Dictionary(uniqueKeysWithValues: SpeechModel.allCases.map {
+            ($0, $0.isDownloaded ? .ready : .needsDownload)
+        })
+        self.modelState = settings.speechModel.isDownloaded ? .unknown : .needsDownload
 
         hotkey.mode = settings.hotkeyMode
         hotkey.key = settings.dictationKey
@@ -286,30 +293,101 @@ final class DictationController: ObservableObject {
         }
     }
 
-    /// Download (if needed) and load the Parakeet model, publishing progress.
-    /// `force` re-runs preparation even when the model is already loaded, so the
-    /// Settings "Re-download" button has an effect in the `.ready` state.
-    func prepareEngine(force: Bool = false) {
-        guard prepareTask == nil else { return }
-        if !force, modelState == .ready { return }
-        modelState = FluidAudioEngine.modelsExistOnDisk()
-            ? .downloading(ModelDownloadProgress(phase: .checking, fraction: 0))
-            : .needsDownload
-        prepareTask = Task { [weak self] in
+    /// Download (if needed) and load the selected model, publishing progress.
+    func prepareEngine() {
+        guard modelState != .ready else { return }
+        downloadModel(settings.speechModel)
+    }
+
+    func downloadModel(_ model: SpeechModel) {
+        guard !isManagingModel else { return }
+        let engine = engine(for: model)
+        isManagingModel = true
+        setModelState(
+            model.isDownloaded
+                ? .downloading(ModelDownloadProgress(phase: .checking, fraction: 0))
+                : .needsDownload,
+            for: model
+        )
+        Task { [weak self] in
             guard let self else { return }
             do {
-                try await self.engine.prepare { progress in
+                try await engine.prepare { [weak self] progress in
                     Task { @MainActor [weak self] in
-                        guard let self, self.modelState != .ready else { return }
-                        self.modelState = .downloading(progress)
+                        guard let self, self.modelState(for: model) != .ready else { return }
+                        self.setModelState(.downloading(progress), for: model)
                     }
                 }
-                self.modelState = .ready
+                self.setModelState(.ready, for: model)
+                if self.settings.speechModel != model {
+                    await engine.unload()
+                }
             } catch {
-                self.modelState = .failed(error.localizedDescription)
+                self.setModelState(.failed(error.localizedDescription), for: model)
             }
-            self.prepareTask = nil
+            self.isManagingModel = false
         }
+    }
+
+    func selectModel(_ model: SpeechModel) {
+        guard settings.speechModel != model else { return }
+        cancelDictation()
+        let previous = settings.speechModel
+        settings.speechModel = model
+        modelState = model.isDownloaded
+            ? .downloading(ModelDownloadProgress(phase: .checking, fraction: 0))
+            : .needsDownload
+        modelStates[model] = modelState
+        Task { [weak self] in
+            guard let self else { return }
+            await self.engine(for: previous).unload()
+            if model.isDownloaded { self.prepareEngine() }
+        }
+    }
+
+    func deleteModel(_ model: SpeechModel) {
+        guard !isManagingModel else { return }
+        cancelDictation()
+        isManagingModel = true
+        setModelState(.downloading(ModelDownloadProgress(phase: .checking, fraction: 0)), for: model)
+        let engine = engine(for: model)
+        Task { [weak self] in
+            guard let self else { return }
+            await engine.unload()
+            do {
+                switch model {
+                case .qwen3ASR1_7B: try QwenAudioEngine.deleteModels()
+                case .parakeetV3:
+                    if FileManager.default.fileExists(atPath: FluidAudioEngine.modelsDirectory.path) {
+                        try FileManager.default.removeItem(at: FluidAudioEngine.modelsDirectory)
+                    }
+                }
+                self.setModelState(.needsDownload, for: model)
+            } catch {
+                self.setModelState(.failed(error.localizedDescription), for: model)
+            }
+            self.isManagingModel = false
+        }
+    }
+
+    func modelState(for model: SpeechModel) -> ModelState {
+        modelStates[model] ?? (model.isDownloaded ? .ready : .needsDownload)
+    }
+
+    private func setModelState(_ state: ModelState, for model: SpeechModel) {
+        modelStates[model] = state
+        if settings.speechModel == model { modelState = state }
+    }
+
+    private func engine(for model: SpeechModel) -> any TranscriptionEngine {
+        switch model {
+        case .qwen3ASR1_7B: qwenAudioEngine
+        case .parakeetV3: fluidAudioEngine
+        }
+    }
+
+    private var selectedEngine: any TranscriptionEngine {
+        engine(for: settings.speechModel)
     }
 
     // MARK: Dictation flow
@@ -341,7 +419,7 @@ final class DictationController: ObservableObject {
         // Live partials are best-effort: the session buffers audio from the very
         // first chunk while the recognizer spins up in the background; a start
         // failure only means no streaming preview — batch still transcribes.
-        streamingSessionBox.value = engine.startStreamingSession(
+        streamingSessionBox.value = selectedEngine.startStreamingSession(
             languageHint: settings.languageHint
         ) { [weak self] partial in
             Task { @MainActor [weak self] in
@@ -612,7 +690,7 @@ final class DictationController: ObservableObject {
                                        languageHint: String?,
                                        timeout: TimeInterval,
                                        session: (any StreamingTranscriptionSession)?) async throws -> TranscriptionResult {
-        let engine = self.engine
+        let engine = selectedEngine
         return try await withThrowingTaskGroup(of: TranscriptionResult.self) { group in
             group.addTask {
                 try await Self.finalTranscription(
@@ -639,7 +717,7 @@ final class DictationController: ObservableObject {
         _ samples: [Float],
         languageHint: String?,
         session: (any StreamingTranscriptionSession)?,
-        engine: FluidAudioEngine
+        engine: any TranscriptionEngine
     ) async throws -> TranscriptionResult {
         guard let session else {
             return try await engine.transcribe(samples, languageHint: languageHint)

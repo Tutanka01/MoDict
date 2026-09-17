@@ -1,12 +1,15 @@
 # MoDict — Architecture
 
-Local, push-to-talk dictation for macOS. Hold right ⌘ → record → release → Parakeet v3
-transcribes on the Neural Engine → text is inserted at the cursor of whatever app is focused.
+Local, push-to-talk dictation for macOS. Hold right ⌘ → record → release → the selected
+on-device model transcribes → text is inserted at the cursor of whatever app is focused.
 
-- Target: macOS 14+, Apple Silicon. Swift 6 toolchain, **language mode v5** (see Concurrency).
-- Build: pure SwiftPM + Command Line Tools (no Xcode). `make` assembles the `.app` bundle.
-- STT: [FluidAudio](https://github.com/FluidInference/FluidAudio) `exact: 0.15.7`,
-  Parakeet-TDT 0.6B **v3** (multilingual, ~482 MB download, ANE).
+- Target: macOS 15+, Apple Silicon. Swift 6 toolchain, **language mode v5** (see Concurrency).
+- Build: SwiftPM + Xcode 16+ toolchain (SwiftUI macros; MLX ships prebuilt).
+  `make` assembles the `.app` bundle, embeds `Cmlx.framework` and the
+  `disable-library-validation` entitlement, and `make verify-bundle` proves the
+  result launches.
+- STT: Qwen3-ASR 1.7B 4-bit through speech-swift/MLX (new-install default), or
+  FluidAudio 0.15.7 with Parakeet-TDT 0.6B v3 (smaller, ANE, live preview).
 - No sandbox (CGEvent posting + global key monitoring are incompatible with it).
 
 ## Module map & file ownership
@@ -30,7 +33,8 @@ Sources/MoDict/
 │   ├── VocabularyStore.swift     [vocabulary] user text replacements (UserDefaults JSON)
 │   └── Transcription/
 │       ├── TranscriptionEngine.swift [stt] protocol + shared result/progress types
-│       └── FluidAudioEngine.swift    [stt] FluidAudio/Parakeet implementation
+│       ├── FluidAudioEngine.swift    [stt] FluidAudio/Parakeet implementation
+│       └── QwenAudioEngine.swift     [stt] speech-swift/Qwen3-ASR implementation
 └── UI/
     ├── Theme.swift               [core]    design tokens (see Docs/DESIGN.md)
     ├── HUD/
@@ -390,7 +394,7 @@ preview never crosses into the notch band. All visuals per Docs/DESIGN.md.
 @MainActor final class OnboardingController {
     init(app: AppModel)
     static func isNeeded(settings: SettingsStore) -> Bool
-    // true if !settings.onboardingCompleted || !FluidAudioEngine.modelsExistOnDisk()
+    // true if onboarding is incomplete or the selected model is not downloaded
     func present()   // activates app (.regular policy), shows window, restores .accessory on close
 }
 ```
@@ -402,7 +406,7 @@ The view drives real actions: `Permissions.*`, `app.controller.prepareEngine()`,
 
 - `SettingsStore`: `@MainActor ObservableObject`, `@Published` properties persisted to
   UserDefaults: `hotkeyMode`, `dictationKey` (`DictationKey`, default `.rightCommand`),
-  `playSounds`, `hapticFeedback`, `restoreClipboard`,
+  `playSounds`, `hapticFeedback`, `restoreClipboard`, `speechModel`,
   `languageHint` ("auto" = the Mac's language when supported, else model detection),
   `inputDeviceUID` (""), `hudPosition`
   (.nearPointer/.bottomCenter/.topCenter, near-pointer default + one-time migration),
@@ -421,8 +425,8 @@ The view drives real actions: `Permissions.*`, `app.controller.prepareEngine()`,
   `partialTranscript: PartialTranscript?` (`@Published`, live transcript of the dictation in
   flight, vocabulary applied, nil whenever none is running),
   `activate()` (start hotkey + prepare engine), `deactivate()`,
-  `prepareEngine(force: Bool = false)` (force re-runs even when `.ready` — Settings
-  Re-download), `setDictationEnabled(_:)`, `startDictation() -> Bool` (false when the begin
+  `prepareEngine()`, model selection/download/deletion helpers, `setDictationEnabled(_:)`,
+  `startDictation() -> Bool` (false when the begin
   is declined so the hotkey monitor never opens a phantom session),
   `stopDictationAndTranscribe()`, `cancelDictation()`. Transcription runs under a timeout
   (`max(30 s, 4×audio + 5 s)`) so a wedged engine can never leave the app stuck in

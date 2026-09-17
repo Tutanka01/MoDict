@@ -23,7 +23,7 @@ final class OnboardingController {
     /// re-running the full flow on every launch would be hostile, and a permission
     /// read can be transiently stale right after launch.
     static func isNeeded(settings: SettingsStore) -> Bool {
-        !settings.onboardingCompleted || !FluidAudioEngine.modelsExistOnDisk()
+        !settings.onboardingCompleted || !settings.speechModel.isDownloaded
     }
 
     func present() {

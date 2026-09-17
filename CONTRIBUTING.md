@@ -12,15 +12,17 @@ two design documents before you write anything:
 
 ## Setup
 
-MoDict builds with pure SwiftPM and the Command Line Tools. You do **not** need Xcode.
+MoDict builds with SwiftPM and needs the full Xcode toolchain: SwiftUI's macros
+(`@State`, `@Observable`) are only shipped with Xcode 16 or later, not with the
+Command Line Tools alone.
 
 **Prerequisites**
 
-- macOS 14 (Sonoma) or later, on Apple Silicon.
-- Xcode Command Line Tools, which include the Swift 6 toolchain:
+- macOS 15 (Sequoia) or later, on Apple Silicon.
+- Xcode 16 or later, including the Swift 6 and Metal toolchains:
 
   ```sh
-  xcode-select --install
+  sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
   swift --version   # expect Swift 6.x
   ```
 
@@ -35,8 +37,10 @@ make run                    # build, sign, and launch it
 ```
 
 The `Makefile`, `Info.plist.in`, entitlements, icon script, and CI workflow are owned by
-the **packaging** module. `make` fetches FluidAudio, builds a universal binary, and
-hand-assembles the `.app` bundle (there is no `.xcodeproj`).
+the **packaging** module. `make` builds the native arm64 binary, embeds the MLX framework
+(`Cmlx.framework`) with the matching rpath, and hand-assembles the `.app` bundle (there is
+no `.xcodeproj`). `make verify-bundle` is the guard rail: it fails unless the signed bundle
+is self-contained and launches.
 
 ### Stable signing for permissions
 
@@ -102,7 +106,7 @@ before picking up work so you know which slice you're touching.
 - Comments are sober and reserved for non-obvious constraints — a production bug, a timing
   requirement, an API quirk. Don't narrate what the code already says.
 - Match the surrounding formatting. No new dependencies without discussion; MoDict has
-  exactly one (FluidAudio, pinned exactly).
+  exactly two, both pinned exactly (`FluidAudio`, `speech-swift`).
 
 ## Testing the pipeline by hand
 
@@ -130,11 +134,14 @@ permissions and let the model download, then walk the full path in a plain
 8. **Permissions** — revoke a permission in System Settings and confirm the error surfaces
    inline in the capsule (never a modal), with a way to fix it.
 
-If your change touches packaging, also confirm the bundle is universal:
+If your change touches packaging, run the guard rail and confirm the universal path still
+works:
 
 ```sh
-swift build -c release --arch arm64 --arch x86_64
+make verify-bundle          # self-contained bundle + launch check
+make universal              # Intel + Apple Silicon, embeds Cmlx.framework
 lipo -info build/MoDict.app/Contents/MacOS/MoDict   # -> x86_64 arm64
+make verify-bundle
 ```
 
 Before a pre-prod build, run the broader P1 pass in [Docs/QA.md](Docs/QA.md).

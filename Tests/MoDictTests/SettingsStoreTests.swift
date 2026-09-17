@@ -16,6 +16,7 @@ struct SettingsStoreTests {
             #expect(store.hapticFeedback)
             #expect(store.restoreClipboard)
             #expect(store.languageHint == "auto")
+            #expect(store.speechModel == .qwen3ASR1_7B)
             #expect(store.inputDeviceUID == "")
             #expect(store.hudPosition == .nearPointer)
             #expect(!store.keepMicWarm)
@@ -33,6 +34,7 @@ struct SettingsStoreTests {
             defaults.set(false, forKey: "hapticFeedback")
             defaults.set(false, forKey: "restoreClipboard")
             defaults.set("fr", forKey: "languageHint")
+            defaults.set(SpeechModel.parakeetV3.rawValue, forKey: "speechModel")
             defaults.set("BuiltInMicUID", forKey: "inputDeviceUID")
             defaults.set(SettingsStore.HUDPosition.topCenter.rawValue, forKey: "hudPosition")
             defaults.set(true, forKey: "nearPointerHUDMigrationCompleted")
@@ -47,10 +49,23 @@ struct SettingsStoreTests {
             #expect(!store.hapticFeedback)
             #expect(!store.restoreClipboard)
             #expect(store.languageHint == "fr")
+            #expect(store.speechModel == .parakeetV3)
             #expect(store.inputDeviceUID == "BuiltInMicUID")
             #expect(store.hudPosition == .topCenter)
             #expect(store.keepMicWarm)
             #expect(store.onboardingCompleted)
+        }
+    }
+
+    @Test
+    func existingInstallWithoutModelPreferenceKeepsParakeet() {
+        withEmptyDefaults { defaults in
+            defaults.set(true, forKey: "onboardingCompleted")
+
+            let store = SettingsStore(defaults: defaults)
+
+            #expect(store.speechModel == .parakeetV3)
+            #expect(defaults.string(forKey: "speechModel") == SpeechModel.parakeetV3.rawValue)
         }
     }
 
@@ -80,6 +95,7 @@ struct SettingsStoreTests {
             store.hapticFeedback = false
             store.restoreClipboard = false
             store.languageHint = "en"
+            store.speechModel = .parakeetV3
             store.inputDeviceUID = "ExternalMicUID"
             store.hudPosition = .topCenter
             store.keepMicWarm = true
@@ -91,6 +107,7 @@ struct SettingsStoreTests {
             #expect(defaults.object(forKey: "hapticFeedback") as? Bool == false)
             #expect(defaults.object(forKey: "restoreClipboard") as? Bool == false)
             #expect(defaults.string(forKey: "languageHint") == "en")
+            #expect(defaults.string(forKey: "speechModel") == SpeechModel.parakeetV3.rawValue)
             #expect(defaults.string(forKey: "inputDeviceUID") == "ExternalMicUID")
             #expect(defaults.string(forKey: "hudPosition") == SettingsStore.HUDPosition.topCenter.rawValue)
             #expect(defaults.object(forKey: "keepMicWarm") as? Bool == true)

@@ -4,36 +4,33 @@
 
 MoDict is a quiet, local dictation tool for macOS. Press and hold the right Command
 key, say something, let go, and the text is typed into whatever app is focused — your
-editor, your browser, a chat box, a terminal. Transcription runs on the Apple Neural
-Engine. No cloud, no account, no telemetry. An open-source alternative to Wispr Flow and
+editor, your browser, a chat box, a terminal. Transcription runs locally on Apple Silicon.
+No cloud, no account, no telemetry. An open-source alternative to Wispr Flow and
 superwhisper, built to disappear until you need it.
 
 [![CI](https://github.com/Tutanka01/MoDict/actions/workflows/build.yml/badge.svg)](https://github.com/Tutanka01/MoDict/actions/workflows/build.yml)
 [![Release](https://img.shields.io/github/v/release/Tutanka01/MoDict?color=555)](https://github.com/Tutanka01/MoDict/releases/latest)
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-555.svg)](LICENSE)
-[![Platform: macOS 14+](https://img.shields.io/badge/platform-macOS%2014%2B%20·%20Apple%20Silicon-555.svg)](#requirements)
+[![Platform: macOS 15+](https://img.shields.io/badge/platform-macOS%2015%2B%20·%20Apple%20Silicon-555.svg)](#requirements)
 
 ## Why MoDict
 
 - **Your voice never leaves your Mac.** Audio is captured, transcribed, and discarded
   locally. Nothing is uploaded, logged, or sent anywhere.
-- **Fast because it runs on the Neural Engine.** MoDict uses
-  [Parakeet-TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) via
-  [FluidAudio](https://github.com/FluidInference/FluidAudio) and CoreML on the ANE.
-  Short utterances transcribe in tens of milliseconds after you release the key —
-  no round trip, no 1–2 second cloud lag.
-- **25 languages.** Parakeet v3 is multilingual; pick one or let MoDict follow your
-  Mac's language. Pinning the language you speak keeps short utterances from being
-  decoded as another language.
+- **French-first by default.** New installations use Qwen3-ASR 1.7B locally through
+  MLX for stronger multilingual and French transcription. Parakeet v3 remains available
+  as a smaller, faster Neural Engine model with live preview.
+- **Models are yours to manage.** Select, download, reveal, or delete either model in
+  Settings → Model. Pinning the language you speak helps avoid decoding in another one.
 - **It stays out of the way.** A small three-line composition preview appears near your
   pointer and vanishes the instant the text lands. No dashboard, no Dock icon —
   just a menu bar glyph.
 
 ## Requirements
 
-- macOS 14 (Sonoma) or later
-- Apple Silicon (the Parakeet model runs on the Neural Engine)
-- ~482 MB of disk for the speech model (downloaded once, on first run)
+- macOS 15 (Sequoia) or later
+- Apple Silicon
+- ~2.3 GB of disk for the default Qwen3-ASR model (~482 MB for Parakeet)
 
 ## Install
 
@@ -56,14 +53,16 @@ superwhisper, built to disappear until you need it.
 
 ### Option 2 — Build from source
 
-Command Line Tools are enough — you do **not** need Xcode.
+Building requires **Xcode 16 or later**: SwiftUI's `@State` and `@Observable` macros are
+only distributed in the full Xcode toolchain, not in the Command Line Tools.
 
 ```sh
-xcode-select --install          # if you don't already have the CLT
+xcode-select -s /Applications/Xcode.app/Contents/Developer   # once, if needed
 git clone https://github.com/Tutanka01/MoDict.git
 cd MoDict
 make            # builds, bundles, and signs build/MoDict.app
 make run        # builds and launches it
+make verify-bundle   # optional: prove the bundle is self-contained
 make dmg        # optional: package the app into build/MoDict-<version>.dmg
 ```
 
@@ -78,6 +77,7 @@ MoDict keeps almost nothing on disk. To remove it completely:
 ```sh
 rm -rf /Applications/MoDict.app
 rm -rf ~/Library/Application\ Support/FluidAudio   # the downloaded speech model
+rm -rf ~/Library/Application\ Support/MoDict       # downloaded Qwen models
 defaults delete com.modict.app                     # settings
 ```
 
@@ -120,15 +120,15 @@ transcriptions live in the menu bar popover; click one to copy it again.
 - **Text lands in the wrong app.** The paste goes to whichever window has keyboard
   focus when transcription finishes; click into the target field before releasing the
   key.
-- **The model download stalls.** It comes from Hugging Face (~482 MB, one time). Use
-  Settings → Model → Re-download after checking your connection.
+- **The model download stalls.** It comes from Hugging Face. Use Settings → Model →
+  Download after checking your connection.
 
 ## How it works
 
 1. A `CGEventTap` watches the right ⌘ key and starts capturing 16 kHz mono audio through
    `AVAudioEngine`.
-2. While you speak, a rolling preview is shown near the pointer but nothing is inserted.
-3. On release, Parakeet-TDT v3 transcribes the full clip once on the Neural Engine.
+2. While you speak, the HUD follows recording; Parakeet also shows a rolling text preview.
+3. On release, the selected local model transcribes the full clip once.
 4. The text is placed on the pasteboard, pasted with a synthetic ⌘V at your cursor, and
    your previous clipboard is restored.
 
@@ -137,9 +137,9 @@ documented in [Docs/ARCHITECTURE.md](Docs/ARCHITECTURE.md).
 
 ## Privacy
 
-- Audio never leaves your Mac. Transcription runs entirely on the Apple Neural Engine.
+- Audio never leaves your Mac. Transcription runs entirely on-device.
 - No telemetry, no analytics, no accounts, no background phone-home.
-- The only network request is the one-time model download (~482 MB) from Hugging Face.
+- The only network request is a model download from Hugging Face when you request it.
 - Transcription history (last five items) is kept in memory only and is never written to
   disk.
 - The clipboard is snapshotted before each insert and restored afterward.
@@ -169,6 +169,8 @@ MoDict builds on the work of others; attribution is required:
 | MoDict | [AGPL-3.0](LICENSE) |
 | [FluidAudio](https://github.com/FluidInference/FluidAudio) | Apache-2.0 |
 | [Parakeet-TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) model weights | CC-BY-4.0 — © NVIDIA |
+| [speech-swift](https://github.com/soniqo/speech-swift) | Apache-2.0 |
+| [Qwen3-ASR 1.7B](https://huggingface.co/aufklarer/Qwen3-ASR-1.7B-MLX-4bit) model weights | Apache-2.0 |
 
 The Parakeet-TDT 0.6B v3 weights are distributed by NVIDIA under
 [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/); using them requires crediting

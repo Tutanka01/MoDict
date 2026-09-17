@@ -1,5 +1,55 @@
 import Foundation
 
+/// Speech models exposed in Settings. The raw value is persisted, so it must stay stable.
+enum SpeechModel: String, CaseIterable, Identifiable, Sendable {
+    case qwen3ASR1_7B = "qwen3-asr-1.7b-4bit"
+    case parakeetV3 = "parakeet-v3"
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .qwen3ASR1_7B: "Qwen3-ASR 1.7B"
+        case .parakeetV3: "Parakeet v3"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .qwen3ASR1_7B: "Best French quality · MLX · 4-bit"
+        case .parakeetV3: "Fast · Neural Engine · live preview"
+        }
+    }
+
+    var approximateDownloadBytes: Int64 {
+        switch self {
+        case .qwen3ASR1_7B: QwenAudioEngine.approximateDownloadBytes
+        case .parakeetV3: FluidAudioEngine.approximateDownloadBytes
+        }
+    }
+
+    var modelsDirectory: URL {
+        switch self {
+        case .qwen3ASR1_7B: QwenAudioEngine.modelsDirectory
+        case .parakeetV3: FluidAudioEngine.modelsDirectory
+        }
+    }
+
+    var isDownloaded: Bool {
+        switch self {
+        case .qwen3ASR1_7B: QwenAudioEngine.modelsExistOnDisk()
+        case .parakeetV3: FluidAudioEngine.modelsExistOnDisk()
+        }
+    }
+
+    var attribution: String {
+        switch self {
+        case .qwen3ASR1_7B: "Qwen3-ASR 1.7B (Apache-2.0) · speech-swift (Apache-2.0)"
+        case .parakeetV3: "NVIDIA Parakeet-TDT 0.6B v3 (CC-BY-4.0) · FluidAudio (Apache-2.0)"
+        }
+    }
+}
+
 /// Result of a single utterance transcription.
 struct TranscriptionResult: Sendable {
     let text: String

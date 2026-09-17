@@ -132,7 +132,7 @@ primary button full-width at bottom (`.borderedProminent`, `.controlSize(.large)
 3. **Accessibility & Input Monitoring** — two permission cards, each with status and an
    "Open Settings" action; auto-advance polling. Copy: "To detect the right ⌘ key and type
    text into your apps. MoDict never logs your keystrokes."
-4. **Speech model** — "Parakeet v3 · 25 languages · runs on the Neural Engine · ~480 MB".
+4. **Speech model** — Qwen3-ASR 1.7B by default; show the selected model, size, and progress.
    One button "Download model" → thin progress bar (fraction + phase label: Downloading /
    Compiling). Resumable; errors inline with Retry.
 5. **Try it** — a real `TextEditor` in the window: "Click below, hold right ⌘ and say
@@ -173,8 +173,8 @@ strong defaults, every option earns its place:
     caption ("Teach MoDict names and terms it mishears. \"mo dict\" becomes \"MoDict\".");
     footer: "Applied to every dictation, before the text is inserted." Monochrome, no explicit
     backgrounds.
-- **Model**: engine card with status (Ready · 482 MB on disk), re-download, reveal in Finder.
-- **About**: version, GitHub link, licenses (FluidAudio Apache-2.0, Parakeet CC-BY-4.0 NVIDIA).
+- **Model**: active-model picker plus download, delete, status, and reveal actions per model.
+- **About**: version, GitHub link, and licenses for FluidAudio, Parakeet, speech-swift, and Qwen3-ASR.
 
 Window 460 × auto (wide enough for the two vocabulary fields). No scroll if possible.
 

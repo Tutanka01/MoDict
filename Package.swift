@@ -33,20 +33,22 @@ let swiftTestingLinkerSettings: [LinkerSetting] = swiftTestingSupport.map { supp
 
 let package = Package(
     name: "MoDict",
-    platforms: [.macOS(.v14)],
+    platforms: [.macOS(.v15)],
     products: [
         .executable(name: "MoDict", targets: ["MoDict"])
     ],
     dependencies: [
         // Pre-1.0 SDK: the ASR API changes between minor versions. Bump deliberately,
         // re-checking signatures against the checked-out sources (see Docs/ARCHITECTURE.md).
-        .package(url: "https://github.com/FluidInference/FluidAudio.git", exact: "0.15.7")
+        .package(url: "https://github.com/FluidInference/FluidAudio.git", exact: "0.15.7"),
+        .package(url: "https://github.com/soniqo/speech-swift.git", exact: "0.0.27")
     ],
     targets: [
         .executableTarget(
             name: "MoDict",
             dependencies: [
-                .product(name: "FluidAudio", package: "FluidAudio")
+                .product(name: "FluidAudio", package: "FluidAudio"),
+                .product(name: "Qwen3ASR", package: "speech-swift")
             ],
             path: "Sources/MoDict",
             swiftSettings: [
