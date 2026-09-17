@@ -175,6 +175,46 @@ Implementation notes (validated against FluidAudio 0.15.7 source — README snip
   pay CoreML's one-time ANE placement cost off the user's first dictation. The bar stays at
   compiling/0.99 during it; a warm-up failure is logged (`NSLog`) and never fails `prepare`.
 
+### SpeechModel [stt] — `TranscriptionEngine.swift`
+
+```swift
+/// The models exposed in Settings. Raw values are persisted in UserDefaults — stable.
+enum SpeechModel: String, CaseIterable, Identifiable, Sendable {
+    case qwen3ASR1_7B = "qwen3-asr-1.7b-4bit"   // fresh-install default
+    case parakeetV3   = "parakeet-v3"           // keeps upgrading installs unchanged
+    var displayName / detail / attribution: String
+    var approximateDownloadBytes: Int64
+    var modelsDirectory: URL
+    var isDownloaded: Bool
+}
+```
+
+`SettingsStore.speechModel` resolves to `.parakeetV3` when `onboardingCompleted` is already
+true (an upgrade must not silently pull ~2.3 GB) and to `.qwen3ASR1_7B` otherwise.
+
+### QwenAudioEngine [stt] — `QwenAudioEngine.swift`
+
+```swift
+actor QwenAudioEngine: TranscriptionEngine {
+    static let modelID = "aufklarer/Qwen3-ASR-1.7B-MLX-4bit"
+    static var modelsDirectory: URL { get }     // ~/Library/Application Support/MoDict/Models/…
+    static func modelsExistOnDisk() -> Bool
+    static func deleteModels() throws
+    static func language(for hint: String?) -> String?   // "fr-FR" → "fr"; "auto"/nil → nil
+}
+```
+
+- `Qwen3ASRModel.fromPretrained(modelId:cacheDir:progressHandler:)` downloads the weights
+  flat into `cacheDir` (config.json, vocab.json, `*.safetensors`, shard index) and skips
+  files already present, so an interrupted download resumes on the next attempt.
+  `modelsExist(at:)` requires `vocab.json` plus the weight file(s).
+- Batch only: `startStreamingSession` returns nil, so the HUD has no live preview while Qwen
+  is active (documented in Settings). Transcription applies the same `AudioConditioner` pass
+  and raw-buffer retry as Parakeet, then `Qwen3DecodingOptions(language:repetitionPenalty:)`.
+- The runtime is the MLX binary framework `Cmlx.framework`; `make bundle` embeds it and the
+  matching rpath, and the `disable-library-validation` entitlement is mandatory. See
+  `scripts/verify-bundle.sh`.
+
 ### HotkeyMonitor [hotkey] — `HotkeyMonitor.swift`
 
 ```swift
@@ -425,7 +465,9 @@ The view drives real actions: `Permissions.*`, `app.controller.prepareEngine()`,
   `partialTranscript: PartialTranscript?` (`@Published`, live transcript of the dictation in
   flight, vocabulary applied, nil whenever none is running),
   `activate()` (start hotkey + prepare engine), `deactivate()`,
-  `prepareEngine()`, model selection/download/deletion helpers, `setDictationEnabled(_:)`,
+  `prepareEngine()` (download+load the selected model when it is not ready),
+  `downloadModel(_:)`, `selectModel(_:)`, `deleteModel(_:)`, `modelState(for:)`
+  (per-model state for Settings), plus `modelStates`, `isManagingModel`, `setDictationEnabled(_:)`,
   `startDictation() -> Bool` (false when the begin
   is declined so the hotkey monitor never opens a phantom session),
   `stopDictationAndTranscribe()`, `cancelDictation()`. Transcription runs under a timeout
