@@ -37,10 +37,11 @@ make run                    # build, sign, and launch it
 ```
 
 The `Makefile`, `Info.plist.in`, entitlements, icon script, and CI workflow are owned by
-the **packaging** module. `make` builds the native arm64 binary, embeds the MLX framework
-(`Cmlx.framework`) with the matching rpath, and hand-assembles the `.app` bundle (there is
-no `.xcodeproj`). `make verify-bundle` is the guard rail: it fails unless the signed bundle
-is self-contained and launches.
+the **packaging** module. `make` builds the native arm64 binary, embeds MLX's Metal
+kernel library (`Support/MLX/default.metallib`, vendored because SwiftPM cannot build
+Metal shaders — see its README), and hand-assembles the `.app` bundle (there is no
+`.xcodeproj`). `make verify-bundle` is the guard rail: it fails unless the signed bundle
+is self-contained and can execute real MLX kernels.
 
 ### Stable signing for permissions
 

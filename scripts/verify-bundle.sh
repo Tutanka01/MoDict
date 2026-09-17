@@ -105,24 +105,28 @@ else
 fi
 
 # --- MLX Metal kernels ---------------------------------------------------------
-if [ -d "$frameworks_dir/Cmlx.framework" ]; then
-    metallib=$(find "$frameworks_dir/Cmlx.framework" -name 'default.metallib' -print -quit)
-    [ -n "$metallib" ] || fail "Cmlx.framework is embedded but default.metallib is missing inside it"
-    check "Cmlx.framework ships default.metallib"
+# MLX throws "Failed to load the default metallib" on the first kernel when no
+# kernel library is reachable: with an embedded Cmlx.framework MLX finds the
+# framework's copy, with a static link it probes the executable's own directory
+# (Contents/MacOS/Resources/default.metallib is the path make bundle fills).
+metallib=""
+for candidate in \
+    "$app/Contents/MacOS/Resources/default.metallib" \
+    "$app/Contents/MacOS/Resources/mlx.metallib" \
+    "$app/Contents/Frameworks/Cmlx.framework/Versions/A/Resources/default.metallib"; do
+    if [ -f "$candidate" ]; then metallib="$candidate"; break; fi
+done
+
+mlx_symbols=$(nm -gU "$executable" 2>/dev/null | grep -c "_mlx_add" || true)
+if [ -z "$metallib" ] && { [ "${mlx_symbols:-0}" -gt 0 ] || [ -n "$embedded" ]; }; then
+    fail "the bundle ships no MLX Metal kernel library (Contents/MacOS/Resources/default.metallib); MLX throws 'Failed to load the default metallib' on the first kernel"
 fi
 
-# A statically linked MLX looks for its kernel library next to the executable.
-mlx_symbols=$(nm -gU "$executable" 2>/dev/null | grep -c "_mlx_add" || true)
-if [ "${mlx_symbols:-0}" -gt 0 ]; then
-    found=""
-    for candidate in \
-        "$app/Contents/MacOS/mlx.metallib" \
-        "$app/Contents/MacOS/Resources/default.metallib" \
-        "$app/Contents/Frameworks/Cmlx.framework/Versions/A/Resources/default.metallib"; do
-        if [ -f "$candidate" ]; then found="$candidate"; fi
-    done
-    [ -n "$found" ] || fail "MLX is statically linked but the bundle ships no Metal kernel library (mlx.metallib / Resources/default.metallib); MLX throws 'Failed to load the default metallib' on the first kernel"
-    check "MLX kernel library present for the static link"
+if [ -n "$metallib" ]; then
+    case "$(file -b "$metallib")" in
+        MetalLib*) check "MLX kernel library: ${metallib#"$app"/}" ;;
+        *) fail "$metallib exists but is not a Metal kernel library" ;;
+    esac
 fi
 
 # --- signature -----------------------------------------------------------------

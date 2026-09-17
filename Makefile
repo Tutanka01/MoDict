@@ -70,23 +70,13 @@ CMLX_FRAMEWORK := $(firstword $(wildcard \
 	$(dir $(BINARY))PackageFrameworks/Cmlx.framework \
 	.build/out/Products/Release/Cmlx.framework))
 
-# MLX's runtime looks for its Metal kernel library next to the executable
-# (mlx.metallib / Resources/default.metallib) or inside a SwiftPM resource
-# bundle. A framework build carries its own copy inside the framework; a
-# from-source build carries none, and MLX then fails with "Failed to load the
-# default metallib" on the first kernel. When the build did not use the
-# framework, fall back to the metallib shipped by the same mlx-swift version.
-# Only the Resources/default.metallib location is used: a metallib directly in
-# Contents/MacOS is treated as nested code by `codesign --deep` and then fails
-# verification ("code object is not signed at all").
-MLX_BUILD_METALLIB := $(firstword $(wildcard \
-	$(dir $(BINARY))mlx.metallib \
-	$(dir $(BINARY))default.metallib \
-	$(dir $(BINARY))Resources/mlx.metallib \
-	$(dir $(BINARY))Resources/default.metallib))
-MLX_PREBUILT_METALLIB := $(firstword $(wildcard \
-	.build/checkouts/mlx-swift/Prebuilt/Cmlx.xcframework/macos-arm64_x86_64/Cmlx.framework/Versions/A/Resources/default.metallib))
-MLX_METALLIB := $(firstword $(MLX_BUILD_METALLIB) $(if $(strip $(CMLX_FRAMEWORK)),,$(MLX_PREBUILT_METALLIB)))
+# MLX refuses to run without its Metal kernel library, and a SwiftPM source
+# build of mlx-swift cannot compile one (SwiftPM has no Metal support; upstream
+# even says the shaders must be built with Xcode). The kernel library is
+# vendored in Support/MLX/default.metallib — see its README. A metallib that a
+# build happens to place next to the binary wins, and a build that embedded
+# Cmlx.framework carries the framework's own copy.
+MLX_METALLIB := Support/MLX/default.metallib
 
 ICON_SRC := Support/generate-icon.swift
 ICON_PNG := $(BUILD_DIR)/Icon-1024.png
@@ -168,9 +158,21 @@ bundle: build icon
 	@if [ -n "$(CMLX_FRAMEWORK)" ]; then \
 		cp -R "$(CMLX_FRAMEWORK)" "$(FRAMEWORK_DIR)/"; \
 	fi
-	@if [ -n "$(MLX_METALLIB)" ]; then \
+	@mlx_metallib=""; \
+	for candidate in \
+		"$(dir $(BINARY))Resources/default.metallib" \
+		"$(dir $(BINARY))Resources/mlx.metallib" \
+		"$(dir $(BINARY))default.metallib" \
+		"$(dir $(BINARY))mlx.metallib" \
+		"$(MLX_METALLIB)"; do \
+		if [ -f "$$candidate" ]; then mlx_metallib="$$candidate"; break; fi; \
+	done; \
+	if [ -n "$$mlx_metallib" ]; then \
 		mkdir -p "$(CONTENTS)/MacOS/Resources"; \
-		cp "$(MLX_METALLIB)" "$(CONTENTS)/MacOS/Resources/default.metallib"; \
+		cp "$$mlx_metallib" "$(CONTENTS)/MacOS/Resources/default.metallib"; \
+		echo "Embedded MLX kernel library: $$mlx_metallib"; \
+	else \
+		echo "warning: no MLX kernel library to embed - Qwen3-ASR will fail at runtime."; \
 	fi
 	@if ! otool -l "$(CONTENTS)/MacOS/$(APP_NAME)" | grep -q "@executable_path/../Frameworks"; then \
 		install_name_tool -add_rpath "@executable_path/../Frameworks" "$(CONTENTS)/MacOS/$(APP_NAME)"; \

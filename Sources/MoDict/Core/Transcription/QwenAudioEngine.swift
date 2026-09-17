@@ -105,14 +105,17 @@ actor QwenAudioEngine: TranscriptionEngine {
             .map(String.init)
     }
 
-    /// Bundle guard rail, not a user code path: runs one real MLX operation
-    /// (device init + a Metal kernel, or a JIT compile when the build ships no
-    /// metallib). `scripts/verify-bundle.sh` calls this from a packaged app to
-    /// prove the shipped bundle can actually execute MLX — a missing kernel
-    /// library or framework only shows up at runtime otherwise.
-    static func runtimeSmokeTest() -> Int {
-        // Int32 keeps `item` an exact conversion: (1+1) + (2+1) + (3+1) = 9.
-        Int((MLXArray([1, 2, 3]) + 1).sum().item(Int32.self))
+    /// Bundle guard rail, not a user code path: runs real MLX kernels inside a
+    /// packaged app — device init, a reduction, and a 2×2 matmul that exercises
+    /// the precompiled GEMM kernels from the shipped kernel library.
+    /// `scripts/verify-bundle.sh` calls this from the built bundle; a missing or
+    /// mismatched kernel library only shows up at runtime otherwise.
+    static func runtimeSmokeTest() -> (reduction: Int, matmul: Int) {
+        let reduction = Int((MLXArray([1, 2, 3]) + 1).sum().item(Int32.self))
+        let matrix = MLXArray([1, 2, 3, 4]).reshaped(2, 2)
+        let identity = MLXArray([1, 0, 0, 1]).reshaped(2, 2)
+        let matmul = Int(matrix.matmul(identity).sum().item(Int32.self))
+        return (reduction, matmul)
     }
 }
 

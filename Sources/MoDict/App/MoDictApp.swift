@@ -10,12 +10,12 @@ struct MoDictApp: App {
     /// touches the UI, permissions, the model, or the network.
     init() {
         if ProcessInfo.processInfo.environment["MODICT_LAUNCH_CHECK"] == "1" {
-            let sum = QwenAudioEngine.runtimeSmokeTest()
-            guard sum == 9 else {
-                print("MODICT_LAUNCH_CHECK: MLX smoke test failed (sum=\(sum), expected 9)")
+            let smoke = QwenAudioEngine.runtimeSmokeTest()
+            guard smoke.reduction == 9, smoke.matmul == 10 else {
+                print("MODICT_LAUNCH_CHECK: MLX smoke test failed (reduction=\(smoke.reduction), matmul=\(smoke.matmul))")
                 exit(EXIT_FAILURE)
             }
-            print("MODICT_LAUNCH_CHECK: ok (dyld + MLX)")
+            print("MODICT_LAUNCH_CHECK: ok (dyld + MLX kernels)")
             exit(EXIT_SUCCESS)
         }
     }

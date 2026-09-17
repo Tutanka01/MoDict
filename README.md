@@ -170,6 +170,7 @@ MoDict builds on the work of others; attribution is required:
 | [FluidAudio](https://github.com/FluidInference/FluidAudio) | Apache-2.0 |
 | [Parakeet-TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) model weights | CC-BY-4.0 — © NVIDIA |
 | [speech-swift](https://github.com/soniqo/speech-swift) | Apache-2.0 |
+| [MLX](https://github.com/ml-explore/mlx) (runtime and Metal kernels) | MIT |
 | [Qwen3-ASR 1.7B](https://huggingface.co/aufklarer/Qwen3-ASR-1.7B-MLX-4bit) model weights | Apache-2.0 |
 
 The Parakeet-TDT 0.6B v3 weights are distributed by NVIDIA under
