@@ -13,6 +13,22 @@ and publishes `MoDict-X.Y.Z.dmg` on the
 - Highlight 2
 -->
 
+## v0.5.1 — 2026-09-19
+
+- Cloud dictation survives temporary OpenRouter congestion: rate limits and
+  provider hiccups (429/502/503/524/529) are retried up to three times with
+  exponential backoff, and a short `Retry-After` hint from the server is
+  honoured. Invalid keys, missing credits, and other permanent errors still
+  fail immediately with an actionable message.
+- **Settings → Model** is easier to read: a summary card shows the model in
+  use and where audio goes, the OpenRouter key section now sits above the
+  cloud models, and every model has its own **Use** button instead of one
+  shared picker. Cloud choices stay disabled until a key is saved.
+- Settings uses native grouped forms at 560 × 540, with semantic fonts and
+  colors in light and dark mode. Vocabulary rows are plain text fields with
+  an always-visible remove button that works with keyboard and pointer.
+- README and the design/QA docs match the new Model tab.
+
 ## v0.5.0 — 2026-09-19
 
 - Optional cloud transcription through OpenRouter: choose **MAI-Transcribe 2**,

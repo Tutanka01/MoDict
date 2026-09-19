@@ -186,9 +186,11 @@ security find-identity -v -p codesigning
   Qwen3-ASR est le modele actif par defaut dans Settings > Model et l'onboarding.
 - [ ] Mise a niveau d'une installation existante (preferences conservees, cache Parakeet
   present): le modele actif reste Parakeet, aucun telechargement Qwen ne demarre tout seul.
-- [ ] Picker `Active model`: basculer vers un modele deja telecharge le charge (`Checking…`
-  puis `Ready`) et la dictee suivante utilise ce modele.
-- [ ] Basculer vers un modele absent le marque `Not downloaded`; dicter avant de le
+- [ ] Carte `Current model`: elle reflete le modele actif (nom, local/cloud, `Audio stays on
+  this Mac` ou `Transcription via OpenRouter`) et se met a jour au changement de modele.
+- [ ] Bouton `Use` d'une ligne locale deja telechargee: le modele se charge (`Checking…` puis
+  `Ready`) et la dictee suivante l'utilise.
+- [ ] Bouton `Use` d'un modele absent le marque `Not downloaded`; dicter avant de le
   telecharger affiche `Model not ready yet`, aucun enregistrement, presse-papiers intact.
 - [ ] `Download` lance le telechargement du modele de la ligne, avec progression
   checking/downloading/compiling; un cache partiel present est reprise et non re-telecharge.
@@ -206,7 +208,8 @@ security find-identity -v -p codesigning
 
 ## OpenRouter (optionnel)
 
-- [ ] Les trois modeles cloud sont selectionnables et affichent `Cloud *` dans le picker.
+- [ ] Les trois modeles cloud ont un bouton `Use`; sans cle, il est desactive et le footer
+  renvoie vers la section `OpenRouter API key`, placee avant les modeles cloud.
 - [ ] Annuler la confirmation garde le modele local actif et n'envoie aucun audio.
 - [ ] Sans cle, le menu affiche `OpenRouter API key needed`; la dictee ne demarre pas.
 - [ ] Une cle enregistree survit a quitter / relancer l'app, sans apparaitre dans

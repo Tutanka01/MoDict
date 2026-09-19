@@ -48,21 +48,48 @@ actor OpenRouterEngine: TranscriptionEngine {
         let request = try Self.request(
             model: model, samples: samples, languageHint: languageHint, key: key
         )
-        let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse else { throw OpenRouterError.invalidResponse }
-        guard (200..<300).contains(http.statusCode) else {
-            throw OpenRouterError.httpStatus(http.statusCode)
+        for attempt in 0..<4 {
+            let (data, response) = try await session.data(for: request)
+            guard let http = response as? HTTPURLResponse else { throw OpenRouterError.invalidResponse }
+            if !(200..<300).contains(http.statusCode) {
+                if let delay = Self.retryDelay(for: http, attempt: attempt) {
+                    try await Task.sleep(for: .seconds(delay))
+                    continue
+                }
+                throw OpenRouterError.httpStatus(http.statusCode)
+            }
+            guard data.count < 1_000_000,
+                  let text = try? JSONDecoder().decode(Response.self, from: data).text else {
+                throw OpenRouterError.invalidResponse
+            }
+            return TranscriptionResult(
+                text: text,
+                confidence: 1,
+                audioDuration: Double(samples.count) / 16_000,
+                processingTime: Date().timeIntervalSince(startedAt)
+            )
         }
-        guard data.count < 1_000_000,
-              let text = try? JSONDecoder().decode(Response.self, from: data).text else {
-            throw OpenRouterError.invalidResponse
+        throw OpenRouterError.invalidResponse
+    }
+
+    /// A small, cancellable retry for provider congestion. Never wait longer than
+    /// the dictation timeout or retry a request OpenRouter says is invalid.
+    static func retryDelay(for response: HTTPURLResponse, attempt: Int, now: Date = .now) -> TimeInterval? {
+        guard attempt < 3, [429, 502, 503, 524, 529].contains(response.statusCode) else {
+            return nil
         }
-        return TranscriptionResult(
-            text: text,
-            confidence: 1,
-            audioDuration: Double(samples.count) / 16_000,
-            processingTime: Date().timeIntervalSince(startedAt)
-        )
+        if let header = response.value(forHTTPHeaderField: "Retry-After") {
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.timeZone = TimeZone(secondsFromGMT: 0)
+            formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss 'GMT'"
+            let seconds = TimeInterval(header) ?? formatter.date(from: header).map { $0.timeIntervalSince(now) }
+            if let seconds {
+                guard seconds <= 20 else { return nil }
+                return max(0.5, seconds)
+            }
+        }
+        return Double(2 << attempt)
     }
 
     static func request(model: SpeechModel, samples: [Float], languageHint: String?, key: String) throws -> URLRequest {
@@ -137,7 +164,7 @@ enum OpenRouterError: LocalizedError {
         case .httpStatus(402): "OpenRouter credits are insufficient. Check your account balance."
         case .httpStatus(404): "This model is unavailable on OpenRouter right now. Try another model."
         case .httpStatus(413): "The recording is too large for OpenRouter. Try a shorter one."
-        case .httpStatus(429): "OpenRouter rate limit reached. Try again shortly."
+        case .httpStatus(429): "OpenRouter is rate limiting this model. Try later or choose a local model."
         case .httpStatus: "OpenRouter could not transcribe this recording. Try again."
         case .invalidResponse: "OpenRouter returned an invalid transcription response."
         }

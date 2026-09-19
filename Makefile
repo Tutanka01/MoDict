@@ -29,7 +29,7 @@
 APP_NAME  := MoDict
 BUNDLE_ID := com.modict.app
 PRODUCT   := MoDict
-VERSION   := 0.5.0
+VERSION   := 0.5.1
 BUILD     ?= 1
 
 # Stable signing identity. Create it once with ./scripts/dev-cert.sh so macOS

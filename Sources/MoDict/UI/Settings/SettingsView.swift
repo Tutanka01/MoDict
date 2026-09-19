@@ -2,10 +2,8 @@ import SwiftUI
 import AppKit
 import Combine
 
-/// Settings scene content. A System-Settings-style `TabView` at 460 pt wide —
-/// wide enough for the two vocabulary fields to breathe. Monochrome: standard
-/// `Form` controls tinted `.primary` so nothing colours the interface but the
-/// system red owned by the HUD (see Docs/DESIGN.md).
+/// Native macOS Settings panes; grouped forms and semantic colors follow the
+/// system appearance in both light and dark mode.
 struct SettingsView: View {
     @ObservedObject private var settings: SettingsStore
     @ObservedObject private var controller: DictationController
@@ -32,8 +30,7 @@ struct SettingsView: View {
                 .tabItem { Label("About", systemImage: "info.circle") }
         }
         .tint(.primary)
-        .frame(width: 460)
-        .frame(minHeight: 340)
+        .frame(width: 560, height: 540)
     }
 }
 
@@ -99,7 +96,7 @@ private struct SettingsGeneralTab: View {
                 }
             }
 
-            Section {
+            Section("App behavior") {
                 Toggle("Launch at login", isOn: $settings.launchAtLogin)
                 Toggle("Play sounds", isOn: $settings.playSounds)
                 Toggle("Haptic feedback", isOn: $settings.hapticFeedback)
@@ -315,6 +312,8 @@ private struct SettingsDictationTab: View {
                     Text("Bottom").tag(SettingsStore.HUDPosition.bottomCenter)
                     Text("Top").tag(SettingsStore.HUDPosition.topCenter)
                 }
+            } header: {
+                Text("Output")
             } footer: {
                 Text("Near pointer shows a private preview where you are working; text is pasted only when dictation stops.")
             }
@@ -324,20 +323,15 @@ private struct SettingsDictationTab: View {
     }
 }
 
-/// One vocabulary rule: two plain fields joined by an arrow, with a remove control
-/// that surfaces on hover. Editing either field mutates the store, which persists.
-/// Fixed-width arrow and remove columns keep the fields aligned across rows.
+/// Fixed-width arrow and remove columns keep replacement fields aligned.
 private struct VocabularyRuleRow: View {
     @Binding var rule: VocabularyRule
     @FocusState.Binding var focusedRule: UUID?
     let onRemove: () -> Void
 
-    @State private var hovered = false
-
     var body: some View {
         HStack(spacing: 10) {
             TextField("Heard", text: $rule.phrase)
-                .textFieldStyle(.plain)
                 .focused($focusedRule, equals: rule.id)
                 .frame(maxWidth: .infinity, alignment: .leading)
             Image(systemName: "arrow.right")
@@ -345,19 +339,15 @@ private struct VocabularyRuleRow: View {
                 .foregroundStyle(.tertiary)
                 .frame(width: 16)
             TextField("Replace with", text: $rule.replacement)
-                .textFieldStyle(.plain)
                 .frame(maxWidth: .infinity, alignment: .leading)
             Button(action: onRemove) {
                 Image(systemName: "minus.circle.fill")
             }
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
-            .opacity(hovered ? 1 : 0)
             .frame(width: 16)
             .accessibilityLabel("Remove rule")
         }
-        .animation(.easeOut(duration: 0.12), value: hovered)
-        .onHover { hovered = $0 }
     }
 }
 
@@ -369,33 +359,31 @@ private struct SettingsModelTab: View {
     @State private var pendingDeletion: SpeechModel?
     @State private var pendingCloudSelection: SpeechModel?
 
-    private var selection: Binding<SpeechModel> {
-        Binding(
-            get: { settings.speechModel },
-            set: { model in
-                if model.isCloud && settings.speechModel != model {
-                    pendingCloudSelection = model
-                } else {
-                    controller.selectModel(model)
-                }
-            }
-        )
-    }
-
     var body: some View {
         Form {
             Section {
-                Picker("Active model", selection: selection) {
-                    ForEach(SpeechModel.localModels) { model in
-                        Text(model.displayName).tag(model)
+                HStack(spacing: 14) {
+                    Image(systemName: settings.speechModel.isCloud ? "cloud" : "waveform")
+                        .font(.system(size: 21, weight: .medium))
+                        .frame(width: 42, height: 42)
+                        .background(.quaternary, in: RoundedRectangle(cornerRadius: 11))
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Current model")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text(settings.speechModel.displayName)
+                            .font(.headline)
+                        Text(settings.speechModel.isCloud
+                             ? (settings.hasOpenRouterKey ? "Transcription via OpenRouter" : "API key needed")
+                             : "Audio stays on this Mac")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
-                    ForEach(SpeechModel.cloudModels) { model in
-                        Text("\(model.displayName) · Cloud *").tag(model)
-                    }
+                    Spacer(minLength: 0)
                 }
-                .disabled(controller.isManagingModel)
+                .padding(.vertical, 6)
             } footer: {
-                Text("Local models stay on this Mac. Cloud models (*) use OpenRouter and require your API key.")
+                Text("Choose a model below. Your selection takes effect immediately.")
             }
 
             Section {
@@ -405,6 +393,7 @@ private struct SettingsModelTab: View {
                         state: controller.modelState(for: model),
                         selected: settings.speechModel == model,
                         actionsDisabled: controller.isManagingModel,
+                        onSelect: { controller.selectModel(model) },
                         onDownload: { controller.downloadModel(model) },
                         onDelete: { pendingDeletion = model }
                     )
@@ -415,6 +404,10 @@ private struct SettingsModelTab: View {
                 Text(SpeechModel.localModels.map(\.attribution).joined(separator: "\n"))
             }
 
+            Section("OpenRouter API key") {
+                OpenRouterKeySection(settings: settings, controller: controller)
+            }
+
             Section {
                 ForEach(SpeechModel.cloudModels) { model in
                     HStack(spacing: 12) {
@@ -422,23 +415,24 @@ private struct SettingsModelTab: View {
                             .font(.system(size: 18))
                             .frame(width: 28)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(model.displayName).font(.system(size: 13, weight: .semibold))
-                            Text(model.detail).font(.system(size: 11)).foregroundStyle(.secondary)
+                            Text(model.displayName).font(.body.weight(.medium))
+                            Text(model.detail).font(.caption).foregroundStyle(.secondary)
                         }
                         Spacer()
-                        Text(settings.hasOpenRouterKey ? "Available" : "Key needed")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
+                        if settings.speechModel == model {
+                            Text("In use").font(.caption).foregroundStyle(.secondary)
+                        } else {
+                            Button("Use") { pendingCloudSelection = model }
+                                .disabled(controller.isManagingModel || !settings.hasOpenRouterKey)
+                        }
                     }
-                    .padding(.vertical, 3)
+                    .padding(.vertical, 5)
                 }
                 CloudPrivacyNotice()
             } header: {
-                Text("Cloud models *")
-            }
-
-            Section("OpenRouter API key") {
-                OpenRouterKeySection(settings: settings, controller: controller)
+                Text("Cloud models")
+            } footer: {
+                Text(settings.hasOpenRouterKey ? "A network connection and OpenRouter credits are required." : "Save an API key above before using a cloud model.")
             }
         }
         .formStyle(.grouped)
@@ -482,16 +476,16 @@ struct CloudPrivacyNotice: View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: "exclamationmark.shield")
                 .font(.system(size: 15))
-                .foregroundStyle(.orange)
+                .foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 5) {
-                Text("Cloud privacy *")
-                    .font(.system(size: 12, weight: .semibold))
-                Text("When a cloud model is active, each recording goes to OpenRouter and its model provider. Data may be retained or used to improve models, depending on the provider. Usage may incur charges. Cloud dictations are limited to 10 minutes. Local models never upload dictation audio.")
-                    .font(.system(size: 11))
+                Text("Cloud privacy")
+                    .font(.subheadline.weight(.semibold))
+                Text("Each recording goes to OpenRouter and its model provider. Retention and training depend on the provider; usage may cost money. Cloud dictations are limited to 10 minutes. Local models never upload audio.")
+                    .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 Link("OpenRouter privacy policy", destination: URL(string: "https://openrouter.ai/privacy/")!)
-                    .font(.system(size: 11))
+                    .font(.caption)
             }
         }
         .padding(.vertical, 4)
@@ -509,7 +503,7 @@ struct OpenRouterKeySection: View {
         VStack(alignment: .leading, spacing: 9) {
             Label(settings.hasOpenRouterKey ? "Saved in macOS Keychain" : "No key saved",
                   systemImage: settings.hasOpenRouterKey ? "checkmark.shield" : "key")
-                .font(.system(size: 12))
+                .font(.subheadline.weight(.medium))
                 .foregroundStyle(settings.hasOpenRouterKey ? Color.primary : Color.secondary)
             SecureField(settings.hasOpenRouterKey ? "Paste a new key to replace it" : "Paste your OpenRouter API key", text: $draft)
                 .textContentType(.password)
@@ -524,14 +518,14 @@ struct OpenRouterKeySection: View {
             }
             .controlSize(.small)
             if let error {
-                Text(error).font(.system(size: 11)).foregroundStyle(.red)
+                Text(error).font(.caption).foregroundStyle(.red)
             }
-            Text("Stored on this Mac in Keychain, including after app restarts. The key is never shown again. It is checked when you transcribe.")
-                .font(.system(size: 11))
+            Text("Stored in Keychain. The key is checked when you transcribe and is never shown again.")
+                .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Link("Create an OpenRouter key", destination: URL(string: "https://openrouter.ai/settings/keys")!)
-                .font(.system(size: 11))
+                .font(.caption)
         }
         .confirmationDialog("Remove the OpenRouter API key?", isPresented: $confirmRemoval) {
             Button("Remove key", role: .destructive) {
@@ -567,6 +561,7 @@ private struct ModelManagementRow: View {
     let state: DictationController.ModelState
     let selected: Bool
     let actionsDisabled: Bool
+    let onSelect: () -> Void
     let onDownload: () -> Void
     let onDelete: () -> Void
 
@@ -604,15 +599,18 @@ private struct ModelManagementRow: View {
                     .frame(width: 28)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(model.displayName)
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.body.weight(.medium))
                     Text("\(model.detail) · ≈ \(sizeText)")
-                        .font(.system(size: 11))
+                        .font(.caption)
                         .foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 0)
-                Text(statusText)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
+                if selected {
+                    Text("In use").font(.caption).foregroundStyle(.secondary)
+                } else {
+                    Button("Use", action: onSelect)
+                        .disabled(actionsDisabled)
+                }
             }
 
             if case .downloading(let progress) = state {
@@ -621,12 +619,15 @@ private struct ModelManagementRow: View {
 
             if case .failed(let message) = state {
                 Text(message)
-                    .font(.system(size: 11))
+                    .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
             }
 
-            HStack {
+            HStack(spacing: 10) {
+                Text(statusText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 if case .downloading = state {
                     EmptyView()
                 } else {

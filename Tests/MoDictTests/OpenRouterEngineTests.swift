@@ -43,4 +43,29 @@ struct OpenRouterEngineTests {
         let json = try #require(JSONSerialization.jsonObject(with: body) as? [String: Any])
         #expect(json["language"] == nil)
     }
+
+    @Test
+    func retriesOnlyTemporaryFailuresAndRespectsServerDelay() throws {
+        func response(_ status: Int, retryAfter: String? = nil) throws -> HTTPURLResponse {
+            try #require(HTTPURLResponse(
+                url: URL(string: "https://openrouter.ai/api/v1/audio/transcriptions")!,
+                statusCode: status,
+                httpVersion: nil,
+                headerFields: retryAfter.map { ["Retry-After": $0] }
+            ))
+        }
+
+        #expect(OpenRouterEngine.retryDelay(for: try response(429), attempt: 0) == 2)
+        #expect(OpenRouterEngine.retryDelay(for: try response(503), attempt: 2) == 8)
+        #expect(OpenRouterEngine.retryDelay(for: try response(429, retryAfter: "6"), attempt: 0) == 6)
+        #expect(OpenRouterEngine.retryDelay(
+            for: try response(429, retryAfter: "Wed, 01 Jan 2025 00:00:06 GMT"),
+            attempt: 0,
+            now: Date(timeIntervalSince1970: 1_735_689_600)
+        ) == 6)
+        #expect(OpenRouterEngine.retryDelay(for: try response(429, retryAfter: "60"), attempt: 0) == nil)
+        #expect(OpenRouterEngine.retryDelay(for: try response(401), attempt: 0) == nil)
+        #expect(OpenRouterEngine.retryDelay(for: try response(500), attempt: 0) == nil)
+        #expect(OpenRouterEngine.retryDelay(for: try response(429), attempt: 3) == nil)
+    }
 }

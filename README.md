@@ -102,14 +102,16 @@ model connects to Hugging Face. Cloud dictation requires an OpenRouter API key.
 
 ## Optional cloud transcription
 
-In Settings → Model, choose **MAI-Transcribe 2** (`microsoft/mai-transcribe-2`),
+In Settings → Model, save an [OpenRouter API key](https://openrouter.ai/settings/keys),
+then choose **MAI-Transcribe 2** (`microsoft/mai-transcribe-2`),
 **Muse Voice Transcribe 1.0** (`meta/muse-voice-transcribe-1.0`), or
 **GPT Transcribe** (`openai/gpt-transcribe`). MoDict asks you to confirm the cloud
-switch. Paste your [OpenRouter API key](https://openrouter.ai/settings/keys) into the
-secure field and save it. The key is stored in this Mac's Keychain, survives app
+switch. The key is stored in this Mac's Keychain, survives app
 restarts, and is never placed in UserDefaults. You can replace or remove it at any
 time. A change of app signing identity may trigger a macOS Keychain access prompt.
 An invalid key is reported on the first transcription.
+Temporary OpenRouter rate limits are retried a few times; persistent limits still
+require waiting or switching to a local model.
 
 Cloud dictation uploads the finished recording over HTTPS to OpenRouter, which routes
 it to a model provider. Providers may retain audio or use it to improve models,

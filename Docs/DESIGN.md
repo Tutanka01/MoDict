@@ -164,20 +164,20 @@ strong defaults, every option earns its place:
   Vocabulary (personal text replacements), Restore clipboard after insert, HUD position
   (Near pointer default / Bottom / Top).
   - **Vocabulary**: a compact list of rules the model applies to every transcription before
-    insertion. Each row is two plain fields (`.plain` style — quiet inline fields, equal
-    widths, no boxes) joined by an `arrow.right` glyph (10 pt medium, `.tertiary`, fixed
-    16 pt column so rows align) — "Heard" → "Replace with" — plus a `minus.circle.fill`
-    (`.secondary`, fixed 16 pt column) remove control that fades in on row hover (0.12 s
-    ease-out). An "Add rule" button (`plus.circle`, `.secondary`) appends an empty rule and
+    insertion. Each row has two native text fields of equal width joined by an `arrow.right`
+    glyph (10 pt medium, `.tertiary`, fixed 16 pt column) — "Heard" → "Replace with" —
+    plus an always-visible `minus.circle.fill` remove control that works with keyboard and
+    pointer. An "Add rule" button (`plus.circle`, `.secondary`) appends an empty rule and
     focuses its first field; edits persist as the user types. Empty state is one `.secondary`
     caption ("Teach MoDict names and terms it mishears. \"mo dict\" becomes \"MoDict\".");
     footer: "Applied to every dictation, before the text is inserted." Monochrome, no explicit
     backgrounds.
-- **Model**: active-model picker; local download/delete/reveal; three optional cloud models,
-  explicit audio/privacy warning, and save/replace/remove controls for the Keychain API key.
+- **Model**: prominent current-model summary; direct Use actions beside each local and cloud
+  model; local download/delete/reveal; Keychain API key before cloud choices; explicit
+  audio/privacy warning.
 - **About**: version, GitHub link, and licenses for FluidAudio, Parakeet, speech-swift, and Qwen3-ASR.
 
-Window 460 × auto (wide enough for the two vocabulary fields). No scroll if possible.
+Window 560 × 540 pt. Native grouped forms scroll within each pane when needed.
 
 ## Sound & haptics
 
