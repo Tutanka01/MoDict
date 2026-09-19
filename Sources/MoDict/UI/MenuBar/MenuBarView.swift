@@ -9,6 +9,7 @@ struct MenuBarView: View {
     @ObservedObject private var controller: DictationController
     @ObservedObject private var settings: SettingsStore
     @ObservedObject private var history: HistoryStore
+    @ObservedObject private var usage: UsageStore
 
     /// Row that flashed a checkmark after being copied, plus the timer that clears it.
     @State private var copiedID: UUID?
@@ -18,6 +19,7 @@ struct MenuBarView: View {
         _controller = ObservedObject(wrappedValue: app.controller)
         _settings = ObservedObject(wrappedValue: app.settings)
         _history = ObservedObject(wrappedValue: app.history)
+        _usage = ObservedObject(wrappedValue: app.usage)
     }
 
     var body: some View {
@@ -30,6 +32,11 @@ struct MenuBarView: View {
 
             historySection
 
+            if usage.snapshot.hasSpend {
+                Divider().padding(.horizontal, 12)
+                MenuBar.UsageSection(snapshot: usage.snapshot)
+            }
+
             Divider().padding(.horizontal, 12)
 
             MenuBar.Footer(settings: settings, controller: controller)
@@ -38,6 +45,7 @@ struct MenuBarView: View {
         // Opening the popover is the natural "did my grant take?" moment after a
         // trip to System Settings — reconcile stale permission issues right away.
         .onAppear { controller.recheckPermissions() }
+        .task { await usage.refresh() }
     }
 
     private var status: MenuBar.Status {
@@ -304,6 +312,13 @@ enum MenuBar {
                         .lineLimit(2)
                         .truncationMode(.tail)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                    if let cost = item.costUSD, cost > 0 {
+                        Text(UsageFormat.cost(cost))
+                            .font(.system(size: 10).monospacedDigit())
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
+                            .padding(.top, 1)
+                    }
                     trailingIcon
                         .frame(width: 14)
                 }
@@ -332,6 +347,61 @@ enum MenuBar {
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.secondary)
             }
+        }
+    }
+
+    /// Cloud spend at the foot of the recent list: today, all time, then the
+    /// models that actually cost money. The caller hides it until there is spend.
+    struct UsageSection: View {
+        let snapshot: UsageSnapshot
+
+        private var paidModels: [UsageSnapshot.ModelUsage] {
+            Array(snapshot.models.filter { $0.isCloud && $0.costUSD > 0 }.prefix(3))
+        }
+
+        var body: some View {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack {
+                    Text("Usage")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Text("USD")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.tertiary)
+                }
+                .padding(.horizontal, 14)
+                .padding(.top, 8)
+                .padding(.bottom, 2)
+
+                row("Today", amount: snapshot.todayUSD, emphasized: true)
+                row("Total", amount: snapshot.totalUSD, emphasized: true)
+
+                ForEach(paidModels) { model in
+                    row(displayName(for: model), amount: model.costUSD, emphasized: false)
+                }
+            }
+            .padding(.bottom, 6)
+        }
+
+        private func displayName(for model: UsageSnapshot.ModelUsage) -> String {
+            SpeechModel(rawValue: model.modelID)?.displayName ?? model.modelID
+        }
+
+        private func row(_ label: String, amount: Decimal, emphasized: Bool) -> some View {
+            HStack(spacing: 8) {
+                Text(label)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer(minLength: 8)
+                Text(UsageFormat.cost(amount))
+                    .font(.system(size: 12).monospacedDigit())
+                    .foregroundStyle(emphasized ? Color.primary : Color.secondary)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 2)
         }
     }
 

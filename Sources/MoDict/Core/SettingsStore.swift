@@ -14,6 +14,24 @@ final class SettingsStore: ObservableObject {
         case topCenter
     }
 
+    /// What the menu bar shows next to its icon. Icon-only by default: a
+    /// permanent dollar badge is opt-in (menu bar space, screen sharing).
+    enum MenuBarCost: String, CaseIterable, Identifiable {
+        case iconOnly
+        case today
+        case total
+
+        var id: String { rawValue }
+
+        var displayName: String {
+            switch self {
+            case .iconOnly: "Icon only"
+            case .today: "Today's spend"
+            case .total: "Total spend"
+            }
+        }
+    }
+
     @Published var hotkeyMode: HotkeyMonitor.Mode {
         didSet { defaults.set(hotkeyMode.rawValue, forKey: "hotkeyMode") }
     }
@@ -43,6 +61,9 @@ final class SettingsStore: ObservableObject {
     }
     @Published var hudPosition: HUDPosition {
         didSet { defaults.set(hudPosition.rawValue, forKey: "hudPosition") }
+    }
+    @Published var menuBarCost: MenuBarCost {
+        didSet { defaults.set(menuBarCost.rawValue, forKey: "menuBarCost") }
     }
     /// Keep the audio engine running between dictations (faster start, permanent orange dot).
     @Published var keepMicWarm: Bool {
@@ -74,7 +95,7 @@ final class SettingsStore: ObservableObject {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        hasOpenRouterKey = (try? OpenRouterKeychain.read()) != nil
+        hasOpenRouterKey = OpenRouterKeyStore.hasKey
         hotkeyMode = HotkeyMonitor.Mode(rawValue: defaults.string(forKey: "hotkeyMode") ?? "") ?? .pushToTalk
         dictationKey = DictationKey(rawValue: defaults.string(forKey: "dictationKey") ?? "") ?? .rightCommand
         playSounds = defaults.object(forKey: "playSounds") as? Bool ?? true
@@ -103,17 +124,18 @@ final class SettingsStore: ObservableObject {
             defaults.set(true, forKey: Self.nearPointerMigrationKey)
         }
         keepMicWarm = defaults.object(forKey: "keepMicWarm") as? Bool ?? false
+        menuBarCost = MenuBarCost(rawValue: defaults.string(forKey: "menuBarCost") ?? "") ?? .iconOnly
         onboardingCompleted = defaults.bool(forKey: "onboardingCompleted")
         launchAtLogin = SMAppService.mainApp.status == .enabled
     }
 
     func saveOpenRouterKey(_ key: String) throws {
-        try OpenRouterKeychain.save(key)
+        try OpenRouterKeyStore.save(key)
         hasOpenRouterKey = true
     }
 
     func removeOpenRouterKey() throws {
-        try OpenRouterKeychain.delete()
+        try OpenRouterKeyStore.delete()
         hasOpenRouterKey = false
     }
 }

@@ -8,11 +8,13 @@ struct SettingsView: View {
     @ObservedObject private var settings: SettingsStore
     @ObservedObject private var controller: DictationController
     @ObservedObject private var vocabulary: VocabularyStore
+    @ObservedObject private var usage: UsageStore
 
     init(app: AppModel) {
         _settings = ObservedObject(wrappedValue: app.settings)
         _controller = ObservedObject(wrappedValue: app.controller)
         _vocabulary = ObservedObject(wrappedValue: app.vocabulary)
+        _usage = ObservedObject(wrappedValue: app.usage)
     }
 
     var body: some View {
@@ -25,6 +27,9 @@ struct SettingsView: View {
 
             SettingsModelTab(settings: settings, controller: controller)
                 .tabItem { Label("Model", systemImage: "cpu") }
+
+            SettingsUsageTab(settings: settings, usage: usage)
+                .tabItem { Label("Usage", systemImage: "chart.bar") }
 
             SettingsAboutTab()
                 .tabItem { Label("About", systemImage: "info.circle") }
@@ -501,7 +506,7 @@ struct OpenRouterKeySection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
-            Label(settings.hasOpenRouterKey ? "Saved in macOS Keychain" : "No key saved",
+            Label(settings.hasOpenRouterKey ? "Saved locally" : "No key saved",
                   systemImage: settings.hasOpenRouterKey ? "checkmark.shield" : "key")
                 .font(.subheadline.weight(.medium))
                 .foregroundStyle(settings.hasOpenRouterKey ? Color.primary : Color.secondary)
@@ -520,7 +525,7 @@ struct OpenRouterKeySection: View {
             if let error {
                 Text(error).font(.caption).foregroundStyle(.red)
             }
-            Text("Stored in Keychain. The key is checked when you transcribe and is never shown again.")
+            Text("Stored locally, readable only by your user account. The key is checked when you transcribe and is never shown again.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -653,6 +658,117 @@ private struct ModelManagementRow: View {
 
     private var sizeText: String {
         ByteCountFormatter.string(fromByteCount: model.approximateDownloadBytes, countStyle: .file)
+    }
+}
+
+// MARK: - Usage
+
+/// Cloud spend and local dictation stats, read from the JSONL usage ledger.
+/// Metrics only — no transcription text is ever stored there.
+private struct SettingsUsageTab: View {
+    @ObservedObject var settings: SettingsStore
+    @ObservedObject var usage: UsageStore
+
+    @State private var confirmingReset = false
+
+    var body: some View {
+        Form {
+            Section {
+                LabeledContent("Today", value: UsageFormat.cost(usage.snapshot.todayUSD))
+                LabeledContent("All time", value: UsageFormat.cost(usage.snapshot.totalUSD))
+                LabeledContent("Dictations", value: "\(usage.snapshot.totalCount)")
+            } header: {
+                Text("Cloud spend")
+            } footer: {
+                Text(spendFooter)
+            }
+
+            Section("Models") {
+                if usage.snapshot.models.isEmpty {
+                    Text("No dictations yet.")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(usage.snapshot.models) { model in
+                        modelRow(model)
+                    }
+                }
+            }
+
+            Section {
+                Picker("Menu bar", selection: $settings.menuBarCost) {
+                    ForEach(SettingsStore.MenuBarCost.allCases) { option in
+                        Text(option.displayName).tag(option)
+                    }
+                }
+            } header: {
+                Text("Menu bar")
+            } footer: {
+                Text("Show cloud spend next to the menu bar icon. Hidden while there is nothing to show.")
+            }
+
+            Section {
+                Button("Reset Usage Data…", role: .destructive) {
+                    confirmingReset = true
+                }
+                Button("Reveal Data in Finder") {
+                    NSWorkspace.shared.activateFileViewerSelecting([UsageLedger.defaultFileURL])
+                }
+                .disabled(!FileManager.default.fileExists(atPath: UsageLedger.defaultFileURL.path))
+            } header: {
+                Text("Data")
+            } footer: {
+                Text("Stored locally at ~/Library/Application Support/MoDict/Usage. Metrics only — never transcription text.")
+            }
+        }
+        .formStyle(.grouped)
+        .task { await usage.refresh() }
+        .confirmationDialog("Reset usage data?", isPresented: $confirmingReset) {
+            Button("Reset", role: .destructive) {
+                Task { await usage.reset() }
+            }
+        } message: {
+            Text("This clears stored dictation counts, durations, tokens, and costs. It cannot be undone.")
+        }
+    }
+
+    private var spendFooter: String {
+        let base = "OpenRouter reports the exact cost of every request; local models are free."
+        let unpriced = usage.snapshot.unpricedCount
+        guard unpriced > 0 else { return base }
+        let requests = unpriced == 1 ? "request" : "requests"
+        return base + " \(unpriced) cloud \(requests) did not report a cost, so totals are a lower bound."
+    }
+
+    private func modelRow(_ model: UsageSnapshot.ModelUsage) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(SpeechModel(rawValue: model.modelID)?.displayName ?? model.modelID)
+                Text(subtitle(model))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 8)
+            Text(model.isCloud ? UsageFormat.cost(model.costUSD) : "Free")
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func subtitle(_ model: UsageSnapshot.ModelUsage) -> String {
+        let dictations = "\(model.count) dictation\(model.count == 1 ? "" : "s")"
+        guard let duration = durationText(model.audioSeconds) else { return dictations }
+        return "\(dictations) · \(duration) of audio"
+    }
+
+    private func durationText(_ seconds: Double) -> String? {
+        guard seconds >= 1 else { return nil }
+        if seconds >= 3600 {
+            let hours = Int(seconds / 3600)
+            let minutes = Int(seconds.truncatingRemainder(dividingBy: 3600) / 60)
+            return "\(hours) h \(minutes) min"
+        }
+        if seconds >= 60 { return "\(Int(seconds / 60)) min" }
+        return "\(Int(seconds.rounded())) s"
     }
 }
 

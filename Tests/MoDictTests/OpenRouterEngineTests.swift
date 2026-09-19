@@ -45,6 +45,24 @@ struct OpenRouterEngineTests {
     }
 
     @Test
+    func decodesUsageWhenPresentAndToleratesItsAbsence() throws {
+        let withUsage = Data(#"""
+        {"text":"hello","usage":{"seconds":9.2,"input_tokens":83,"output_tokens":30,"cost":0.000508}}
+        """#.utf8)
+        let decoded = try JSONDecoder().decode(OpenRouterEngine.Response.self, from: withUsage)
+        #expect(decoded.text == "hello")
+        #expect(decoded.usage?.seconds == 9.2)
+        #expect(decoded.usage?.inputTokens == 83)
+        #expect(decoded.usage?.outputTokens == 30)
+        let cost = try #require(decoded.usage?.cost)
+        #expect(UsageFormat.cost(cost, locale: Locale(identifier: "en_US")) == "$0.0005")
+
+        let withoutUsage = try JSONDecoder().decode(
+            OpenRouterEngine.Response.self, from: Data(#"{"text":"hi"}"#.utf8))
+        #expect(withoutUsage.usage == nil)
+    }
+
+    @Test
     func retriesOnlyTemporaryFailuresAndRespectsServerDelay() throws {
         func response(_ status: Int, retryAfter: String? = nil) throws -> HTTPURLResponse {
             try #require(HTTPURLResponse(

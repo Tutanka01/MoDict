@@ -68,12 +68,35 @@ enum SpeechModel: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
+/// Billing metadata a cloud provider reported for one request. Local engines
+/// leave it nil. `costUSD` is the exact amount charged for this request.
+struct TranscriptionUsage: Sendable, Equatable {
+    let audioSeconds: Double?
+    let inputTokens: Int?
+    let outputTokens: Int?
+    let costUSD: Decimal?
+}
+
 /// Result of a single utterance transcription.
 struct TranscriptionResult: Sendable {
     let text: String
     let confidence: Float          // 0…1
     let audioDuration: TimeInterval
     let processingTime: TimeInterval
+    /// Present only when a cloud provider reported usage for this request.
+    let usage: TranscriptionUsage?
+
+    init(text: String,
+         confidence: Float,
+         audioDuration: TimeInterval,
+         processingTime: TimeInterval,
+         usage: TranscriptionUsage? = nil) {
+        self.text = text
+        self.confidence = confidence
+        self.audioDuration = audioDuration
+        self.processingTime = processingTime
+        self.usage = usage
+    }
 }
 
 /// Coarse progress for the one-time model download + compile on first launch.

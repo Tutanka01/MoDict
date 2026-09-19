@@ -25,7 +25,7 @@ actor OpenRouterEngine: TranscriptionEngine {
     var isReady: Bool { ready }
 
     func prepare(progress: @escaping @Sendable (ModelDownloadProgress) -> Void) async throws {
-        ready = try OpenRouterKeychain.read() != nil
+        ready = try OpenRouterKeyStore.read() != nil
         guard ready else { throw OpenRouterError.missingKey }
         progress(ModelDownloadProgress(phase: .ready, fraction: 1))
     }
@@ -38,7 +38,7 @@ actor OpenRouterEngine: TranscriptionEngine {
     ) -> StreamingTranscriptionSession? { nil }
 
     func transcribe(_ samples: [Float], languageHint: String?) async throws -> TranscriptionResult {
-        guard ready, let key = try OpenRouterKeychain.read() else { throw OpenRouterError.missingKey }
+        guard ready, let key = try OpenRouterKeyStore.read() else { throw OpenRouterError.missingKey }
         guard !samples.isEmpty else {
             return TranscriptionResult(text: "", confidence: 0, audioDuration: 0, processingTime: 0)
         }
@@ -59,14 +59,22 @@ actor OpenRouterEngine: TranscriptionEngine {
                 throw OpenRouterError.httpStatus(http.statusCode)
             }
             guard data.count < 1_000_000,
-                  let text = try? JSONDecoder().decode(Response.self, from: data).text else {
+                  let decoded = try? JSONDecoder().decode(Response.self, from: data) else {
                 throw OpenRouterError.invalidResponse
             }
             return TranscriptionResult(
-                text: text,
+                text: decoded.text,
                 confidence: 1,
                 audioDuration: Double(samples.count) / 16_000,
-                processingTime: Date().timeIntervalSince(startedAt)
+                processingTime: Date().timeIntervalSince(startedAt),
+                usage: decoded.usage.map {
+                    TranscriptionUsage(
+                        audioSeconds: $0.seconds,
+                        inputTokens: $0.inputTokens,
+                        outputTokens: $0.outputTokens,
+                        costUSD: $0.cost
+                    )
+                }
             )
         }
         throw OpenRouterError.invalidResponse
@@ -137,7 +145,28 @@ actor OpenRouterEngine: TranscriptionEngine {
         return data
     }
 
-    private struct Response: Decodable { let text: String }
+    /// The endpoint answers OpenAI-style `{ "text": … }` plus an OpenRouter
+    /// `usage` block when the provider reported one. `usage` is optional in the
+    /// API schema — the app must keep working without it. Internal rather than
+    /// private so the decoder stays covered by tests.
+    struct Response: Decodable {
+        let text: String
+        let usage: Usage?
+
+        struct Usage: Decodable {
+            let seconds: Double?
+            let inputTokens: Int?
+            let outputTokens: Int?
+            let cost: Decimal?
+
+            enum CodingKeys: String, CodingKey {
+                case seconds
+                case inputTokens = "input_tokens"
+                case outputTokens = "output_tokens"
+                case cost
+            }
+        }
+    }
 }
 
 /// Do not forward the bearer token or audio to a different host on HTTP redirect.

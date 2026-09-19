@@ -76,13 +76,14 @@ MoDict keeps almost nothing on disk. To remove it completely:
 ```sh
 rm -rf /Applications/MoDict.app
 rm -rf ~/Library/Application\ Support/FluidAudio   # the downloaded speech model
-rm -rf ~/Library/Application\ Support/MoDict       # downloaded Qwen models
+rm -rf ~/Library/Application\ Support/MoDict       # models, usage, OpenRouter key
 defaults delete com.modict.app                     # settings
 ```
 
-If you saved an OpenRouter key, remove it in Settings → Model before uninstalling,
-or delete the "MoDict OpenRouter API key" item in Keychain Access afterward. The
-Keychain item intentionally survives app deletion and restart.
+If you saved an OpenRouter key, remove it in Settings → Model before uninstalling.
+The key file lives in `~/Library/Application Support/MoDict` and intentionally
+survives app deletion and restart. Older builds kept it in the login Keychain; an
+old "MoDict OpenRouter API key" item there can be deleted in Keychain Access.
 
 ## First launch
 
@@ -106,9 +107,9 @@ In Settings → Model, save an [OpenRouter API key](https://openrouter.ai/settin
 then choose **MAI-Transcribe 2** (`microsoft/mai-transcribe-2`),
 **Muse Voice Transcribe 1.0** (`meta/muse-voice-transcribe-1.0`), or
 **GPT Transcribe** (`openai/gpt-transcribe`). MoDict asks you to confirm the cloud
-switch. The key is stored in this Mac's Keychain, survives app
-restarts, and is never placed in UserDefaults. You can replace or remove it at any
-time. A change of app signing identity may trigger a macOS Keychain access prompt.
+switch. The key is stored in a user-only (0600) file on this Mac, survives app
+restarts, and is never placed in UserDefaults or logs. You can replace or remove it
+at any time.
 An invalid key is reported on the first transcription.
 Temporary OpenRouter rate limits are retried a few times; persistent limits still
 require waiting or switching to a local model.
@@ -120,6 +121,12 @@ and your account privacy settings before using it with sensitive speech. Usage c
 incur charges. Cloud recordings are limited to 10 minutes. Cloud models have no live
 transcript preview. Switching back to Qwen3-ASR or Parakeet keeps subsequent audio
 local.
+
+MoDict tracks what cloud dictation costs. Every OpenRouter response reports the exact
+charge for that request, and MoDict keeps a local ledger of dictations, durations and
+costs — shown in the menu bar popover and in Settings → Usage (per model, with a reset).
+The ledger stores metrics only, never transcription text; local models are free. The menu
+bar can optionally show today's or all-time spend next to its icon.
 
 ## Usage
 
@@ -167,8 +174,9 @@ documented in [Docs/ARCHITECTURE.md](Docs/ARCHITECTURE.md).
 - No telemetry, analytics, or background phone-home. Cloud use requires an OpenRouter account.
 - Local model downloads use Hugging Face. Cloud requests use OpenRouter only when you
   dictate with a cloud model selected.
-- The OpenRouter key is stored in the macOS login Keychain, never in preferences
-  or logs. Audio requests use an ephemeral URL session without a disk cache.
+- The OpenRouter key is stored in a user-only (0600) file under Application Support,
+  never in preferences or logs. Audio requests use an ephemeral URL session without a
+  disk cache.
 - Transcription history (last five items) is kept in memory only and is never written to
   disk.
 - The clipboard is snapshotted before each insert and restored afterward.

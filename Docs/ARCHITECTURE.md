@@ -25,7 +25,7 @@ Sources/MoDict/
 ├── Core/
 │   ├── DictationController.swift [core]    central state machine — owns all modules
 │   ├── SettingsStore.swift       [core]    user preferences (UserDefaults-backed)
-│   ├── OpenRouterKeychain.swift  [core]    macOS login Keychain credential
+│   ├── OpenRouterKeyStore.swift  [core]    OpenRouter API key in a 0600 file
 │   ├── Permissions.swift         [core]    mic / accessibility / input-monitoring helpers
 │   ├── HotkeyMonitor.swift       [hotkey]  configurable-key CGEventTap (press/release/cancel)
 │   ├── MicrophoneCapture.swift   [audio]   AVAudioEngine → 16 kHz mono Float samples
@@ -33,6 +33,8 @@ Sources/MoDict/
 │   ├── TextInserter.swift        [insert]  clipboard + synthetic ⌘V, restore, secure-input
 │   ├── HistoryStore.swift        [menubar] recent transcriptions (in-memory)
 │   ├── VocabularyStore.swift     [vocabulary] user text replacements (UserDefaults JSON)
+│   ├── UsageLedger.swift         [usage]   JSONL cost/usage ledger + aggregates + USD format
+│   ├── UsageStore.swift          [usage]   main-actor façade publishing UsageSnapshot
 │   └── Transcription/
 │       ├── TranscriptionEngine.swift [stt] protocol + shared result/progress types
 │       ├── FluidAudioEngine.swift    [stt] FluidAudio/Parakeet implementation
@@ -45,12 +47,12 @@ Sources/MoDict/
     │   ├── HUDPanel.swift        [hud]     non-activating NSPanel subclass
     │   └── HUDView.swift         [hud]     SwiftUI composition card + rolling preview
     ├── MenuBar/
-    │   └── MenuBarView.swift     [menubar] popover content (status, history, footer)
+    │   └── MenuBarView.swift     [menubar] popover content (status, history, usage, footer)
     ├── Onboarding/
     │   ├── OnboardingController.swift [onboarding] window lifecycle
     │   └── OnboardingView.swift       [onboarding] 5 steps (see DESIGN.md)
     └── Settings/
-        └── SettingsView.swift    [settings] tabs: General / Dictation / Model / About
+        └── SettingsView.swift    [settings] tabs: General / Dictation / Model / Usage / About
 ```
 
 Root-level (owner **packaging**): `Makefile`, `Support/Info.plist.in`,
@@ -80,11 +82,22 @@ Robustness rules (all implemented in `DictationController`, don't duplicate):
 ### Types shared by everyone (declared in `TranscriptionEngine.swift` [stt])
 
 ```swift
+/// Billing metadata a cloud provider reported for one request (nil locally).
+struct TranscriptionUsage: Sendable, Equatable {
+    let audioSeconds: Double?
+    let inputTokens: Int?
+    let outputTokens: Int?
+    let costUSD: Decimal?          // exact amount charged for this request
+}
+
 struct TranscriptionResult: Sendable {
     let text: String
     let confidence: Float          // 0…1
     let audioDuration: TimeInterval
     let processingTime: TimeInterval
+    let usage: TranscriptionUsage? // cloud only
+    // Explicit init with `usage` defaulted to nil keeps every existing call
+    // site (engines, tests) source-compatible.
 }
 
 struct ModelDownloadProgress: Sendable, Equatable {
@@ -365,14 +378,77 @@ pasteboard still holds our session (string matches AND marker matches). Check
         let id: UUID
         let text: String
         let date: Date
+        let costUSD: Decimal?      // what this dictation cost on a cloud model
     }
     @Published private(set) var items: [Item]   // newest first, max 5
-    func add(_ text: String)
+    func add(_ text: String, costUSD: Decimal? = nil)
     func copyToClipboard(_ item: Item)
     func clear()
 }
 ```
-In-memory only (privacy) — no disk persistence.
+In-memory only (privacy) — no disk persistence. The per-dictation cost dies with the
+item; the durable copy lives in `UsageLedger`.
+
+### UsageLedger / UsageStore [usage] — `UsageLedger.swift`, `UsageStore.swift`
+
+```swift
+struct UsageRecord: Codable, Sendable, Equatable {
+    var schemaVersion: Int
+    var date: Date
+    var day: String                // local "yyyy-MM-dd", frozen at write time
+    var modelID: String            // SpeechModel.rawValue
+    var isCloud: Bool
+    var audioSeconds: Double
+    var processingSeconds: Double
+    var inputTokens: Int?
+    var outputTokens: Int?
+    var costUSD: Decimal?          // exact OpenRouter charge for this request
+    // custom init(from:) using decodeIfPresent on every field: additive fields
+    // must never break old lines.
+}
+
+struct UsageSnapshot: Sendable, Equatable {
+    struct ModelUsage: Sendable, Equatable, Identifiable { /* count, audioSeconds, costUSD, unpricedCount */ }
+    var totalCount, todayCount: Int
+    var totalUSD, todayUSD: Decimal
+    var unpricedCount: Int         // cloud 200s whose response carried no usage block
+    var models: [ModelUsage]       // sorted by spend, then dictation count
+    var isEmpty, hasSpend: Bool
+}
+
+actor UsageLedger {
+    static var defaultFileURL: URL  // ~/Library/Application Support/MoDict/Usage/ledger.jsonl
+    init(fileURL: URL = UsageLedger.defaultFileURL)
+    func snapshot() -> UsageSnapshot
+    @discardableResult func record(_ record: UsageRecord) -> UsageSnapshot
+    func reset()
+}
+
+enum UsageFormat {
+    /// Adaptive decimals: <$0.0001 · $0.0005 · $0.012 · $1.24; never "$0.00" for a positive cost.
+    static func cost(_ value: Decimal, locale: Locale = .current) -> String
+}
+
+@MainActor final class UsageStore: ObservableObject {
+    @Published private(set) var snapshot: UsageSnapshot
+    init(ledger: UsageLedger = UsageLedger())
+    func refresh() async          // load once, publish
+    func record(_ record: UsageRecord) async
+    func reset() async
+}
+```
+
+Rules:
+- One line per **finished** dictation, appended by `DictationController.finishTranscription`
+  (the single landing point for every engine result) — including the empty-text and
+  failed-paste paths, because a successful cloud response is billed regardless. Failures and
+  timeouts write nothing (failed generations are not billed).
+- `usage.cost` from the OpenRouter response is the source of truth; a response without a
+  `usage` block still records the dictation and counts toward `unpricedCount`.
+- Append + fsync per record (~1–2 ms measured); reads tolerate truncated/unknown lines;
+  aggregates recompute in one pass. No database — see `Docs/research/usage-cost-tracking.md`
+  for the volume thresholds that would justify SQLite, and why not GRDB/SwiftData.
+- Metrics only — never transcript text. Directory 0o700, file 0o600.
 
 ### VocabularyStore [vocabulary] — `VocabularyStore.swift`
 
@@ -462,8 +538,8 @@ The view drives real actions: `Permissions.*`, `app.controller.prepareEngine()`,
   `accessibilityGranted`, `requestAccessibility()`, `inputMonitoringGranted`,
   `requestInputMonitoring()`, `openSettings(pane:)` deep-links.
 - `AppModel`: `@MainActor` singleton (`AppModel.shared`) owning `settings`, `history`,
-  `controller`. `MoDictApp`/`AppDelegate` bootstrap: onboarding if needed, else
-  `controller.activate()`.
+  `vocabulary`, `usage`, `controller`. `MoDictApp`/`AppDelegate` bootstrap: onboarding if
+  needed, else `controller.activate()`, then `usage.refresh()`.
 - `DictationController`: the only place that mutates dictation state. Public:
   `phase: Phase { idle, recording, transcribing }` (`@Published`),
   `modelState: ModelState { unknown, needsDownload, needsAPIKey, downloading(ModelDownloadProgress), ready,

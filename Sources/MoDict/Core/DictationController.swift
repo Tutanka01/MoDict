@@ -11,16 +11,20 @@ final class AppModel {
     let settings: SettingsStore
     let history: HistoryStore
     let vocabulary: VocabularyStore
+    let usage: UsageStore
     let controller: DictationController
 
     private init() {
         let settings = SettingsStore()
         let history = HistoryStore()
         let vocabulary = VocabularyStore()
+        let usage = UsageStore()
         self.settings = settings
         self.history = history
         self.vocabulary = vocabulary
-        self.controller = DictationController(settings: settings, history: history, vocabulary: vocabulary)
+        self.usage = usage
+        self.controller = DictationController(settings: settings, history: history,
+                                              vocabulary: vocabulary, usage: usage)
     }
 }
 
@@ -169,6 +173,7 @@ final class DictationController: ObservableObject {
     let settings: SettingsStore
     let history: HistoryStore
     let vocabulary: VocabularyStore
+    let usage: UsageStore
 
     private let hotkey: HotkeyMonitor
     private let microphone: MicrophoneCapture
@@ -199,10 +204,11 @@ final class DictationController: ObservableObject {
     private nonisolated static let sampleRate = 16_000
     private static let minimumTranscriptionTimeout: TimeInterval = 30
 
-    init(settings: SettingsStore, history: HistoryStore, vocabulary: VocabularyStore) {
+    init(settings: SettingsStore, history: HistoryStore, vocabulary: VocabularyStore, usage: UsageStore) {
         self.settings = settings
         self.history = history
         self.vocabulary = vocabulary
+        self.usage = usage
         self.hotkey = HotkeyMonitor()
         self.microphone = MicrophoneCapture()
         self.fluidAudioEngine = FluidAudioEngine()
@@ -510,7 +516,10 @@ final class DictationController: ObservableObject {
         hud.show(.transcribing)
 
         let languageHint = settings.languageHint == "auto" ? nil : settings.languageHint
-        let timeout = Self.transcriptionTimeout(forAudioDuration: duration, cloud: settings.speechModel.isCloud)
+        // Capture the model now: the result landing may trail the request, and
+        // the usage record must name the model that actually ran.
+        let model = settings.speechModel
+        let timeout = Self.transcriptionTimeout(forAudioDuration: duration, cloud: model.isCloud)
         transcriptionTask?.cancel()
         transcriptionTask = Task { [weak self] in
             guard let self else { return }
@@ -521,7 +530,7 @@ final class DictationController: ObservableObject {
                     timeout: timeout,
                     session: session
                 )
-                await self.finishTranscription(result, recordingID: recordingID)
+                await self.finishTranscription(result, recordingID: recordingID, model: model)
             } catch {
                 // Idempotent; drops a session a timeout left mid-finish.
                 await session?.cancel()
@@ -548,8 +557,24 @@ final class DictationController: ObservableObject {
 
     // MARK: Completion
 
-    private func finishTranscription(_ result: TranscriptionResult, recordingID: UUID) async {
+    private func finishTranscription(_ result: TranscriptionResult,
+                                     recordingID: UUID,
+                                     model: SpeechModel) async {
         guard currentRecordingID == recordingID else { return }
+
+        // A successful response is billed even when the text turns out empty or
+        // the paste cannot land, so the usage record happens before any early
+        // return. Failures never reach this method — failed generations are not billed.
+        await usage.record(UsageRecord(
+            modelID: model.rawValue,
+            isCloud: model.isCloud,
+            audioSeconds: result.audioDuration,
+            processingSeconds: result.processingTime,
+            inputTokens: result.usage?.inputTokens,
+            outputTokens: result.usage?.outputTokens,
+            costUSD: result.usage?.costUSD
+        ))
+        let cost = result.usage?.costUSD
 
         // Personal vocabulary runs before the empty-check: a rule can delete the
         // whole utterance, which then takes the "Didn't catch that." path.
@@ -586,19 +611,19 @@ final class DictationController: ObservableObject {
         case .inserted:
             userIssue = nil
             lastInsertedText = text
-            history.add(text)
+            history.add(text, costUSD: cost)
             sounds.dictationSucceeded()
             transientHUD(.success, dwell: Theme.successDwell)
         case .secureInputBlocked:
-            history.add(text)   // don't lose the words — they're in history
+            history.add(text, costUSD: cost)   // don't lose the words — they're in history
             sounds.dictationFailed()
             showUserIssue(.secureInputBlocked)
         case .noAccessibilityPermission:
-            history.add(text)
+            history.add(text, costUSD: cost)
             sounds.dictationFailed()
             showUserIssue(.accessibilityPermissionMissing)
         case .failed(let reason):
-            history.add(text)
+            history.add(text, costUSD: cost)
             sounds.dictationFailed()
             showUserIssue(.insertionFailed(reason))
         }

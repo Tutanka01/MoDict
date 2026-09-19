@@ -222,6 +222,19 @@ security find-identity -v -p codesigning
   une dictee de plus de 10 min est refusee avant l'envoi.
 - [ ] `lsof -i -n -P -c MoDict`: aucun appel OpenRouter avec modele local; un appel
   `openrouter.ai` seulement apres la fin d'une dictee cloud.
+- [ ] Une dictee cloud reussie affiche son cout dans l'historique du menu bar et alimente
+  `Today` / `Total` dans la section `Usage` du popover.
+- [ ] Settings -> Usage: tableau par modele (dictees, duree audio, cout); les modeles
+  locaux affichent `Free`; un total positif ne s'affiche jamais `$0.00`.
+- [ ] `Menu bar` -> `Today's spend` ou `Total spend`: badge de cout a chiffres tabulaires,
+  masque quand il n'y a rien a montrer; `Icon only` restaure l'icone seule.
+- [ ] Relancer l'app: les totaux sont conserves (relecture du ledger JSONL).
+- [ ] `Reveal Data in Finder` ouvre `~/Library/Application Support/MoDict/Usage/ledger.jsonl`;
+  le fichier ne contient aucun texte de dictee, seulement des metriques.
+- [ ] `Reset Usage Data...` vide les compteurs et supprime le fichier, sans toucher a
+  l'historique ni aux preferences.
+- [ ] Une dictee cloud dont le texte ressort vide (`Didn't catch that.`) reste comptee;
+  une dictee echouee (401/402/429/reseau) n'est pas comptee.
 
 ## Insertion dans apps courantes
 

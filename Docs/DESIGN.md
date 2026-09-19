@@ -107,13 +107,22 @@ application while recording.
 
 - Icon: SF Symbol `waveform` (template, monochrome). While recording, switch to
   `waveform` with `.symbolEffect(.variableColor.iterative)`; while the model downloads, show
-  `arrow.down.circle` with the same treatment.
+  `arrow.down.circle` with the same treatment. Optional cost badge (Settings → Usage → Menu
+  bar, off by default): today's or all-time cloud spend in tabular figures, hidden while
+  there is nothing to show. The `MenuBarExtra` label is cached by the system until hover —
+  the badge is best-effort, never a live clock.
 - `MenuBarExtra` with `.menuBarExtraStyle(.window)` — a small popover, not a system menu:
   - Status row: "Ready · hold right ⌘ to dictate" / "Downloading model… 42%" / "Recording…"
     While recording/transcribing with a live transcript, one quiet line of the words in
     flight appears beneath the status (11 pt, `.secondary`, single line, head-truncated).
   - Last 5 transcriptions (two-line truncated). Click → copies to clipboard, brief check.
+    A cloud dictation also shows its own cost beside the text (10 pt, `.tertiary`, tabular).
     Empty state: `waveform` glyph + "Your dictations will appear here".
+  - Usage (only once cloud spend exists): "Today" and "Total" in 12 pt tabular figures with
+    adaptive decimals — `$0.0005` under a cent, `$0.012` under a dollar, `$1.24` above,
+    `<$0.0001` below the smallest shown amount — then up to three cloud models that cost
+    money, sorted by spend. `USD` is stated once in the section header. Labels `.secondary`,
+    totals `.primary`, model rows `.secondary`.
   - Footer row: gear icon (Settings), power toggle (Enable/Disable), quit.
 - Popover width: 300 pt. Everything `.ultraThinMaterial`-friendly, no explicit backgrounds.
 
@@ -134,7 +143,7 @@ primary button full-width at bottom (`.borderedProminent`, `.controlSize(.large)
    text into your apps. MoDict never logs your keystrokes."
 4. **Speech model** — Qwen3-ASR 1.7B by default; local and cloud models are selectable.
    Local models show download size and progress. Cloud selection needs a privacy confirmation,
-   persistent warning, and a SecureField for an OpenRouter key stored in macOS Keychain.
+   persistent warning, and a SecureField for an OpenRouter key stored locally.
 5. **Try it** — a real `TextEditor` in the window: "Click below, hold right ⌘ and say
    something. Release the key to transcribe and insert your words." On first successful insertion:
    checkmark spring animation + "That's it. MoDict lives in your menu bar."
@@ -173,8 +182,11 @@ strong defaults, every option earns its place:
     footer: "Applied to every dictation, before the text is inserted." Monochrome, no explicit
     backgrounds.
 - **Model**: prominent current-model summary; direct Use actions beside each local and cloud
-  model; local download/delete/reveal; Keychain API key before cloud choices; explicit
+  model; local download/delete/reveal; local API key field before cloud choices; explicit
   audio/privacy warning.
+- **Usage**: cloud spend (Today / All time / dictations), a per-model list with dictation
+  counts, audio duration and cost (local rows read "Free"), the menu bar cost picker, and
+  Reset / Reveal for the local ledger file. Footer: metrics only, never transcription text.
 - **About**: version, GitHub link, and licenses for FluidAudio, Parakeet, speech-swift, and Qwen3-ASR.
 
 Window 560 × 540 pt. Native grouped forms scroll within each pane when needed.

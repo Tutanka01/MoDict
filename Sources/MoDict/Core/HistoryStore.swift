@@ -10,11 +10,14 @@ final class HistoryStore: ObservableObject {
         let id: UUID
         let text: String
         let date: Date
+        /// What this dictation cost on a cloud model; nil for local models.
+        let costUSD: Decimal?
 
-        init(text: String, date: Date = Date()) {
+        init(text: String, date: Date = Date(), costUSD: Decimal? = nil) {
             self.id = UUID()
             self.text = text
             self.date = date
+            self.costUSD = costUSD
         }
     }
 
@@ -23,10 +26,10 @@ final class HistoryStore: ObservableObject {
 
     private static let maxItems = 5
 
-    func add(_ text: String) {
+    func add(_ text: String, costUSD: Decimal? = nil) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        items.insert(Item(text: trimmed), at: 0)
+        items.insert(Item(text: trimmed, costUSD: costUSD), at: 0)
         if items.count > Self.maxItems {
             items.removeLast(items.count - Self.maxItems)
         }
