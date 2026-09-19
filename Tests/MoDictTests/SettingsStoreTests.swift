@@ -70,6 +70,18 @@ struct SettingsStoreTests {
     }
 
     @Test
+    func cloudModelSelectionPersistsWithoutSavingAKeyInDefaults() {
+        withEmptyDefaults { defaults in
+            let store = SettingsStore(defaults: defaults)
+            store.speechModel = .maiTranscribe2
+            let reopened = SettingsStore(defaults: defaults)
+            #expect(reopened.speechModel == .maiTranscribe2)
+            #expect(defaults.string(forKey: "speechModel") == "microsoft/mai-transcribe-2")
+            #expect(defaults.dictionaryRepresentation().keys.allSatisfy { !$0.lowercased().contains("apikey") })
+        }
+    }
+
+    @Test
     func legacyHUDPositionMigratesToNearPointerOnlyOnce() {
         withEmptyDefaults { defaults in
             defaults.set(SettingsStore.HUDPosition.topCenter.rawValue, forKey: "hudPosition")

@@ -36,7 +36,7 @@
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSMicrophoneUsageDescription</key>
-    <string>MoDict records audio while you hold the dictation key, then transcribes it entirely on this Mac.</string>
+    <string>MoDict records audio while you dictate. Local models process it on this Mac; cloud models send it to OpenRouter when selected.</string>
     <key>NSHumanReadableCopyright</key>
     <string>© 2026 Mohamad El Akhal — AGPL-3.0</string>
 </dict>

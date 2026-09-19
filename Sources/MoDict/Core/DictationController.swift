@@ -40,6 +40,7 @@ final class DictationController: ObservableObject {
     enum ModelState: Equatable {
         case unknown
         case needsDownload
+        case needsAPIKey
         case downloading(ModelDownloadProgress)
         case ready
         case failed(String)
@@ -55,6 +56,7 @@ final class DictationController: ObservableObject {
         case insertionFailed(InsertOutcome.FailureReason)
         case transcriptionTimedOut
         case transcriptionFailed
+        case cloudTranscriptionFailed(String)
 
         var symbol: String {
             switch self {
@@ -66,7 +68,7 @@ final class DictationController: ObservableObject {
                 return "hand.raised"
             case .secureInputBlocked:
                 return "lock.fill"
-            case .insertionFailed, .transcriptionTimedOut, .transcriptionFailed:
+            case .insertionFailed, .transcriptionTimedOut, .transcriptionFailed, .cloudTranscriptionFailed:
                 return "exclamationmark.triangle"
             }
         }
@@ -91,6 +93,8 @@ final class DictationController: ObservableObject {
                 return "Transcription took too long"
             case .transcriptionFailed:
                 return "Transcription failed"
+            case .cloudTranscriptionFailed:
+                return "Cloud transcription failed"
             }
         }
 
@@ -114,6 +118,8 @@ final class DictationController: ObservableObject {
                 return "Transcription timed out"
             case .transcriptionFailed:
                 return "Transcription failed"
+            case .cloudTranscriptionFailed:
+                return "Cloud transcription failed"
             }
         }
 
@@ -144,6 +150,8 @@ final class DictationController: ObservableObject {
                 return "Try a shorter utterance, or retry after the model settles."
             case .transcriptionFailed:
                 return "Try again; no text was inserted."
+            case .cloudTranscriptionFailed(let detail):
+                return detail
             }
         }
     }
@@ -166,6 +174,7 @@ final class DictationController: ObservableObject {
     private let microphone: MicrophoneCapture
     private let fluidAudioEngine: FluidAudioEngine
     private let qwenAudioEngine: QwenAudioEngine
+    private let cloudEngines: [SpeechModel: OpenRouterEngine]
     private let inserter: TextInserter
     private let hud: HUDController
     private let sounds: SoundFeedback
@@ -198,13 +207,19 @@ final class DictationController: ObservableObject {
         self.microphone = MicrophoneCapture()
         self.fluidAudioEngine = FluidAudioEngine()
         self.qwenAudioEngine = QwenAudioEngine()
+        self.cloudEngines = Dictionary(uniqueKeysWithValues: SpeechModel.cloudModels.map {
+            ($0, OpenRouterEngine(model: $0))
+        })
         self.inserter = TextInserter(settings: settings)
         self.hud = HUDController(settings: settings)
         self.sounds = SoundFeedback(settings: settings)
         self.modelStates = Dictionary(uniqueKeysWithValues: SpeechModel.allCases.map {
-            ($0, $0.isDownloaded ? .ready : .needsDownload)
+            ($0, $0.isCloud ? (settings.hasOpenRouterKey ? .ready : .needsAPIKey)
+                             : ($0.isDownloaded ? .ready : .needsDownload))
         })
-        self.modelState = settings.speechModel.isDownloaded ? .unknown : .needsDownload
+        self.modelState = settings.speechModel.isCloud
+            ? (settings.hasOpenRouterKey ? .unknown : .needsAPIKey)
+            : (settings.speechModel.isDownloaded ? .unknown : .needsDownload)
 
         hotkey.mode = settings.hotkeyMode
         hotkey.key = settings.dictationKey
@@ -301,10 +316,14 @@ final class DictationController: ObservableObject {
 
     func downloadModel(_ model: SpeechModel) {
         guard !isManagingModel else { return }
+        if model.isCloud && !settings.hasOpenRouterKey {
+            setModelState(.needsAPIKey, for: model)
+            return
+        }
         let engine = engine(for: model)
         isManagingModel = true
         setModelState(
-            model.isDownloaded
+            (model.isCloud || model.isDownloaded)
                 ? .downloading(ModelDownloadProgress(phase: .checking, fraction: 0))
                 : .needsDownload,
             for: model
@@ -314,11 +333,13 @@ final class DictationController: ObservableObject {
             do {
                 try await engine.prepare { [weak self] progress in
                     Task { @MainActor [weak self] in
-                        guard let self, self.modelState(for: model) != .ready else { return }
+                        guard let self, self.modelState(for: model) != .ready,
+                              !model.isCloud || self.settings.hasOpenRouterKey else { return }
                         self.setModelState(.downloading(progress), for: model)
                     }
                 }
-                self.setModelState(.ready, for: model)
+                self.setModelState(model.isCloud && !self.settings.hasOpenRouterKey
+                    ? .needsAPIKey : .ready, for: model)
                 if self.settings.speechModel != model {
                     await engine.unload()
                 }
@@ -334,18 +355,28 @@ final class DictationController: ObservableObject {
         cancelDictation()
         let previous = settings.speechModel
         settings.speechModel = model
-        modelState = model.isDownloaded
+        modelState = (model.isCloud && !settings.hasOpenRouterKey) ? .needsAPIKey
+            : (model.isCloud || model.isDownloaded)
             ? .downloading(ModelDownloadProgress(phase: .checking, fraction: 0))
             : .needsDownload
         modelStates[model] = modelState
         Task { [weak self] in
             guard let self else { return }
             await self.engine(for: previous).unload()
-            if model.isDownloaded { self.prepareEngine() }
+            if model.isCloud || model.isDownloaded { self.prepareEngine() }
         }
     }
 
+    func refreshCloudKeyState() {
+        if settings.speechModel.isCloud { cancelDictation() }
+        for model in SpeechModel.cloudModels {
+            setModelState(settings.hasOpenRouterKey ? .unknown : .needsAPIKey, for: model)
+        }
+        if settings.speechModel.isCloud && settings.hasOpenRouterKey { prepareEngine() }
+    }
+
     func deleteModel(_ model: SpeechModel) {
+        guard !model.isCloud else { return }
         guard !isManagingModel else { return }
         cancelDictation()
         isManagingModel = true
@@ -361,6 +392,7 @@ final class DictationController: ObservableObject {
                     if FileManager.default.fileExists(atPath: FluidAudioEngine.modelsDirectory.path) {
                         try FileManager.default.removeItem(at: FluidAudioEngine.modelsDirectory)
                     }
+                case .maiTranscribe2, .museVoiceTranscribe, .gptTranscribe: break
                 }
                 self.setModelState(.needsDownload, for: model)
             } catch {
@@ -371,7 +403,9 @@ final class DictationController: ObservableObject {
     }
 
     func modelState(for model: SpeechModel) -> ModelState {
-        modelStates[model] ?? (model.isDownloaded ? .ready : .needsDownload)
+        modelStates[model] ?? (model.isCloud
+            ? (settings.hasOpenRouterKey ? .ready : .needsAPIKey)
+            : (model.isDownloaded ? .ready : .needsDownload))
     }
 
     private func setModelState(_ state: ModelState, for model: SpeechModel) {
@@ -383,6 +417,7 @@ final class DictationController: ObservableObject {
         switch model {
         case .qwen3ASR1_7B: qwenAudioEngine
         case .parakeetV3: fluidAudioEngine
+        case .maiTranscribe2, .museVoiceTranscribe, .gptTranscribe: cloudEngines[model]!
         }
     }
 
@@ -475,7 +510,7 @@ final class DictationController: ObservableObject {
         hud.show(.transcribing)
 
         let languageHint = settings.languageHint == "auto" ? nil : settings.languageHint
-        let timeout = Self.transcriptionTimeout(forAudioDuration: duration)
+        let timeout = Self.transcriptionTimeout(forAudioDuration: duration, cloud: settings.speechModel.isCloud)
         transcriptionTask?.cancel()
         transcriptionTask = Task { [weak self] in
             guard let self else { return }
@@ -582,6 +617,10 @@ final class DictationController: ObservableObject {
             hud.hide()
         } else if error is TranscriptionTimeoutError {
             showUserIssue(.transcriptionTimedOut)
+        } else if let cloudError = error as? OpenRouterError {
+            showUserIssue(.cloudTranscriptionFailed(cloudError.localizedDescription))
+        } else if settings.speechModel.isCloud {
+            showUserIssue(.cloudTranscriptionFailed("Check your connection and try again."))
         } else {
             showUserIssue(.transcriptionFailed)
         }
@@ -610,6 +649,8 @@ final class DictationController: ObservableObject {
             return ("Speech model is starting", "ellipsis.circle")
         case .needsDownload:
             return ("Speech model needs download", "arrow.down.circle")
+        case .needsAPIKey:
+            return ("Add an OpenRouter API key in Settings", "key")
         case .downloading(let progress):
             switch progress.phase {
             case .checking:
@@ -682,8 +723,8 @@ final class DictationController: ObservableObject {
         hud.setPartial(display)
     }
 
-    private static func transcriptionTimeout(forAudioDuration duration: TimeInterval) -> TimeInterval {
-        max(minimumTranscriptionTimeout, duration * 4 + 5)
+    private static func transcriptionTimeout(forAudioDuration duration: TimeInterval, cloud: Bool) -> TimeInterval {
+        max(cloud ? 75 : minimumTranscriptionTimeout, duration * 4 + 5)
     }
 
     private func transcribeWithTimeout(_ samples: [Float],

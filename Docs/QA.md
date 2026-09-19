@@ -14,7 +14,8 @@ Une build P1 est **bloquee** si un seul point ci-dessous echoue:
 - une insertion reussie ne restaure pas le presse-papiers quand l'option est active;
 - un champ securise recoit du texte, ou la transcription est perdue au lieu d'aller dans l'historique;
 - un changement de micro/AirPods, un sleep/wake ou une permission retiree crash l'app;
-- une donnee sensible de dictee est ecrite sur disque ou envoyee hors du telechargement modele attendu.
+- une donnee sensible de dictee est ecrite sur disque ou envoyee sans selection explicite
+  d'un modele cloud et sans consentement affiche.
 
 ## Artefacts locaux
 
@@ -169,6 +170,10 @@ security find-identity -v -p codesigning
 - [ ] Speech model sans cache: bouton `Download model`, progression checking/downloading/
   compiling, erreur retry si reseau coupe, pas de dictee possible tant que non pret.
 - [ ] Speech model avec cache deja present: l'etape verifie/charge puis auto-avance.
+- [ ] Speech model: le picker distingue local / cloud; selection cloud demande confirmation,
+  montre l'avertissement sur l'envoi audio et les couts, puis demande une cle.
+- [ ] Sans cle cloud, `Save an API key above` bloque la suite; apres enregistrement,
+  l'etape passe a `Ready` puis avance. Essayer une vraie dictee dans `Try it`.
 - [ ] Try it: le `TextEditor` recoit une vraie dictee, `onboardingCompleted=true`, puis
   l'app revient en menu-bar accessory.
 - [ ] Reouverture apres onboarding termine et permissions presentes: pas d'onboarding.
@@ -198,6 +203,22 @@ security find-identity -v -p codesigning
   apres le relachement. Parakeet actif: la preview live fonctionne toujours.
 - [ ] Baseline d'espace disque: ~2.3 Go pour Qwen, ~482 Mo pour Parakeet, liberes par
   `Delete`.
+
+## OpenRouter (optionnel)
+
+- [ ] Les trois modeles cloud sont selectionnables et affichent `Cloud *` dans le picker.
+- [ ] Annuler la confirmation garde le modele local actif et n'envoie aucun audio.
+- [ ] Sans cle, le menu affiche `OpenRouter API key needed`; la dictee ne demarre pas.
+- [ ] Une cle enregistree survit a quitter / relancer l'app, sans apparaitre dans
+  `defaults read com.modict.app` ni dans les logs. Le champ ne revele jamais la cle.
+- [ ] Remplacer la cle, puis la supprimer: aucun nouvel envoi cloud n'est possible;
+  une dictee locale reste possible apres selection d'un modele local.
+- [ ] Une cle invalide, un manque de credits, une limite de debit et une coupure reseau
+  affichent une erreur actionnable sans texte insere ni cle exposee.
+- [ ] Une dictee cloud aboutit avec chacun des trois modeles, en francais et en auto;
+  une dictee de plus de 10 min est refusee avant l'envoi.
+- [ ] `lsof -i -n -P -c MoDict`: aucun appel OpenRouter avec modele local; un appel
+  `openrouter.ai` seulement apres la fin d'une dictee cloud.
 
 ## Insertion dans apps courantes
 
@@ -333,15 +354,14 @@ Avec `Restore clipboard after insert` desactive:
 
 ## Non-regression confidentialite
 
-- [ ] Aucune connexion reseau en usage normal lorsque le modele est deja pret:
+- [ ] Avec un modele local deja pret, aucune connexion reseau en usage normal:
 
   ```sh
   lsof -i -n -P -c MoDict
   ```
 
-- [ ] Pendant premier telechargement, la seule activite reseau attendue est le modele
-  Hugging Face demande par l'utilisateur (Qwen3-ASR ou Parakeet). Aucune telemetrie,
-  aucun compte, aucun endpoint produit.
+- [ ] Pendant premier telechargement local, la seule activite reseau attendue est le modele
+  Hugging Face demande par l'utilisateur (Qwen3-ASR ou Parakeet). Aucune telemetrie.
 - [ ] L'historique est memoire seulement: faire 5 dictees, quitter MoDict, relancer,
   l'historique est vide.
 - [ ] Preferences sans phrase dictee:

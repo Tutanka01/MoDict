@@ -367,11 +367,18 @@ private struct SettingsModelTab: View {
     @ObservedObject var settings: SettingsStore
     @ObservedObject var controller: DictationController
     @State private var pendingDeletion: SpeechModel?
+    @State private var pendingCloudSelection: SpeechModel?
 
     private var selection: Binding<SpeechModel> {
         Binding(
             get: { settings.speechModel },
-            set: { controller.selectModel($0) }
+            set: { model in
+                if model.isCloud && settings.speechModel != model {
+                    pendingCloudSelection = model
+                } else {
+                    controller.selectModel(model)
+                }
+            }
         )
     }
 
@@ -379,17 +386,20 @@ private struct SettingsModelTab: View {
         Form {
             Section {
                 Picker("Active model", selection: selection) {
-                    ForEach(SpeechModel.allCases) { model in
+                    ForEach(SpeechModel.localModels) { model in
                         Text(model.displayName).tag(model)
+                    }
+                    ForEach(SpeechModel.cloudModels) { model in
+                        Text("\(model.displayName) · Cloud *").tag(model)
                     }
                 }
                 .disabled(controller.isManagingModel)
             } footer: {
-                Text("Qwen3-ASR gives the best French quality. Parakeet is lighter and keeps the live transcript preview.")
+                Text("Local models stay on this Mac. Cloud models (*) use OpenRouter and require your API key.")
             }
 
             Section {
-                ForEach(SpeechModel.allCases) { model in
+                ForEach(SpeechModel.localModels) { model in
                     ModelManagementRow(
                         model: model,
                         state: controller.modelState(for: model),
@@ -400,9 +410,35 @@ private struct SettingsModelTab: View {
                     )
                 }
             } header: {
-                Text("Models")
+                Text("On this Mac")
             } footer: {
-                Text(SpeechModel.allCases.map(\.attribution).joined(separator: "\n"))
+                Text(SpeechModel.localModels.map(\.attribution).joined(separator: "\n"))
+            }
+
+            Section {
+                ForEach(SpeechModel.cloudModels) { model in
+                    HStack(spacing: 12) {
+                        Image(systemName: settings.speechModel == model ? "checkmark.circle.fill" : "cloud")
+                            .font(.system(size: 18))
+                            .frame(width: 28)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(model.displayName).font(.system(size: 13, weight: .semibold))
+                            Text(model.detail).font(.system(size: 11)).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Text(settings.hasOpenRouterKey ? "Available" : "Key needed")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.vertical, 3)
+                }
+                CloudPrivacyNotice()
+            } header: {
+                Text("Cloud models *")
+            }
+
+            Section("OpenRouter API key") {
+                OpenRouterKeySection(settings: settings, controller: controller)
             }
         }
         .formStyle(.grouped)
@@ -422,6 +458,107 @@ private struct SettingsModelTab: View {
         } message: { model in
             Text("This removes the local \(model.displayName) files. You can download them again later.")
         }
+        .confirmationDialog(
+            "Use \(pendingCloudSelection?.displayName ?? "cloud model")?",
+            isPresented: Binding(
+                get: { pendingCloudSelection != nil },
+                set: { if !$0 { pendingCloudSelection = nil } }
+            ),
+            presenting: pendingCloudSelection
+        ) { model in
+            Button("Use cloud model") {
+                controller.selectModel(model)
+                pendingCloudSelection = nil
+            }
+            Button("Cancel", role: .cancel) { pendingCloudSelection = nil }
+        } message: { _ in
+            Text("Each recording will be sent to OpenRouter and a model provider. Providers may retain or use data to improve models. API usage may cost money.")
+        }
+    }
+}
+
+struct CloudPrivacyNotice: View {
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "exclamationmark.shield")
+                .font(.system(size: 15))
+                .foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 5) {
+                Text("Cloud privacy *")
+                    .font(.system(size: 12, weight: .semibold))
+                Text("When a cloud model is active, each recording goes to OpenRouter and its model provider. Data may be retained or used to improve models, depending on the provider. Usage may incur charges. Cloud dictations are limited to 10 minutes. Local models never upload dictation audio.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Link("OpenRouter privacy policy", destination: URL(string: "https://openrouter.ai/privacy/")!)
+                    .font(.system(size: 11))
+            }
+        }
+        .padding(.vertical, 4)
+    }
+}
+
+struct OpenRouterKeySection: View {
+    @ObservedObject var settings: SettingsStore
+    @ObservedObject var controller: DictationController
+    @State private var draft = ""
+    @State private var error: String?
+    @State private var confirmRemoval = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            Label(settings.hasOpenRouterKey ? "Saved in macOS Keychain" : "No key saved",
+                  systemImage: settings.hasOpenRouterKey ? "checkmark.shield" : "key")
+                .font(.system(size: 12))
+                .foregroundStyle(settings.hasOpenRouterKey ? Color.primary : Color.secondary)
+            SecureField(settings.hasOpenRouterKey ? "Paste a new key to replace it" : "Paste your OpenRouter API key", text: $draft)
+                .textContentType(.password)
+                .privacySensitive()
+                .onSubmit(save)
+            HStack {
+                Button(settings.hasOpenRouterKey ? "Replace key" : "Save key", action: save)
+                    .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                if settings.hasOpenRouterKey {
+                    Button("Remove key", role: .destructive) { confirmRemoval = true }
+                }
+            }
+            .controlSize(.small)
+            if let error {
+                Text(error).font(.system(size: 11)).foregroundStyle(.red)
+            }
+            Text("Stored on this Mac in Keychain, including after app restarts. The key is never shown again. It is checked when you transcribe.")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Link("Create an OpenRouter key", destination: URL(string: "https://openrouter.ai/settings/keys")!)
+                .font(.system(size: 11))
+        }
+        .confirmationDialog("Remove the OpenRouter API key?", isPresented: $confirmRemoval) {
+            Button("Remove key", role: .destructive) {
+                do {
+                    try settings.removeOpenRouterKey()
+                    draft = ""
+                    error = nil
+                    controller.refreshCloudKeyState()
+                } catch {
+                    self.error = error.localizedDescription
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Cloud dictation will stop until you save another key. Local models are unaffected.")
+        }
+    }
+
+    private func save() {
+        do {
+            try settings.saveOpenRouterKey(draft)
+            draft = ""
+            error = nil
+            controller.refreshCloudKeyState()
+        } catch {
+            self.error = error.localizedDescription
+        }
     }
 }
 
@@ -439,13 +576,14 @@ private struct ModelManagementRow: View {
     }
 
     private var hasLocalFiles: Bool {
-        FileManager.default.fileExists(atPath: model.modelsDirectory.path)
+        model.modelsDirectory.map { FileManager.default.fileExists(atPath: $0.path) } ?? false
     }
 
     private var statusText: String {
         switch state {
         case .unknown: "Checking…"
         case .needsDownload: "Not downloaded"
+        case .needsAPIKey: "Key needed"
         case .ready: "Ready"
         case .failed: "Download failed"
         case .downloading(let progress):
@@ -501,7 +639,9 @@ private struct ModelManagementRow: View {
                         Button("Delete", role: .destructive, action: onDelete)
                             .disabled(actionsDisabled)
                         Button("Reveal in Finder") {
-                            NSWorkspace.shared.activateFileViewerSelecting([model.modelsDirectory])
+                            if let directory = model.modelsDirectory {
+                                NSWorkspace.shared.activateFileViewerSelecting([directory])
+                            }
                         }
                     }
                 }
@@ -570,7 +710,7 @@ private struct SettingsAboutTab: View {
             } header: {
                 Text("Licenses")
             } footer: {
-                Text("Local, on-device dictation. Your speech never leaves this Mac.")
+                Text("Local models process audio on this Mac. Cloud models send recordings to OpenRouter when selected.")
             }
         }
         .formStyle(.grouped)

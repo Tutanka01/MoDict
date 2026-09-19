@@ -13,6 +13,20 @@ and publishes `MoDict-X.Y.Z.dmg` on the
 - Highlight 2
 -->
 
+## v0.5.0 — 2026-09-19
+
+- Optional cloud transcription through OpenRouter: choose **MAI-Transcribe 2**,
+  **Muse Voice Transcribe 1.0**, or **GPT Transcribe** alongside the two local
+  models. Local transcription remains the default and keeps audio on this Mac.
+- Cloud use is explicit: MoDict shows the privacy and cost warning before the
+  switch, sends audio only after the recording ends, limits cloud recordings to
+  10 minutes, and blocks dictation until an API key is available.
+- OpenRouter API keys are stored in the macOS login Keychain, never in
+  UserDefaults, logs, or the request body. Keys can be replaced or removed from
+  Settings → Model.
+- Updated onboarding, settings, menu-bar status, privacy copy, architecture
+  notes, and QA coverage for the local/cloud model split.
+
 ## v0.4.1 — 2026-09-17
 
 - Fixed the v0.4.0 download: its app could not initialize the MLX runtime

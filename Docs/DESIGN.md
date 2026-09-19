@@ -125,18 +125,18 @@ primary button full-width at bottom (`.borderedProminent`, `.controlSize(.large)
 `.primary` monochrome look via `.tint(.primary)`).
 
 1. **Welcome** — App icon glyph, "Dictate anywhere." headline, one line: "Hold the right ⌘ key,
-   speak, release. Your words appear wherever your cursor is. 100% on-device."
+   speak, release. Your words appear wherever your cursor is. Local by default; cloud is optional."
    A small animated rendition of the right-⌘ keycap pressing.
 2. **Microphone** — why + button "Allow microphone" → `AVCaptureDevice.requestAccess`.
    Card flips to granted state with checkmark automatically.
 3. **Accessibility & Input Monitoring** — two permission cards, each with status and an
    "Open Settings" action; auto-advance polling. Copy: "To detect the right ⌘ key and type
    text into your apps. MoDict never logs your keystrokes."
-4. **Speech model** — Qwen3-ASR 1.7B by default; show the selected model, size, and progress.
-   One button "Download model" → thin progress bar (fraction + phase label: Downloading /
-   Compiling). Resumable; errors inline with Retry.
+4. **Speech model** — Qwen3-ASR 1.7B by default; local and cloud models are selectable.
+   Local models show download size and progress. Cloud selection needs a privacy confirmation,
+   persistent warning, and a SecureField for an OpenRouter key stored in macOS Keychain.
 5. **Try it** — a real `TextEditor` in the window: "Click below, hold right ⌘ and say
-   something. Watch your words appear as you speak." On first successful insertion:
+   something. Release the key to transcribe and insert your words." On first successful insertion:
    checkmark spring animation + "That's it. MoDict lives in your menu bar."
    Button "Start dictating" closes onboarding.
 
@@ -173,7 +173,8 @@ strong defaults, every option earns its place:
     caption ("Teach MoDict names and terms it mishears. \"mo dict\" becomes \"MoDict\".");
     footer: "Applied to every dictation, before the text is inserted." Monochrome, no explicit
     backgrounds.
-- **Model**: active-model picker plus download, delete, status, and reveal actions per model.
+- **Model**: active-model picker; local download/delete/reveal; three optional cloud models,
+  explicit audio/privacy warning, and save/replace/remove controls for the Keychain API key.
 - **About**: version, GitHub link, and licenses for FluidAudio, Parakeet, speech-swift, and Qwen3-ASR.
 
 Window 460 × auto (wide enough for the two vocabulary fields). No scroll if possible.

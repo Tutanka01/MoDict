@@ -1,7 +1,7 @@
 # MoDict — Architecture
 
-Local, push-to-talk dictation for macOS. Hold right ⌘ → record → release → the selected
-on-device model transcribes → text is inserted at the cursor of whatever app is focused.
+Push-to-talk dictation for macOS. Hold right ⌘ → record → release → the selected
+local or OpenRouter model transcribes → text is inserted at the cursor of whatever app is focused.
 
 - Target: macOS 15+, Apple Silicon. Swift 6 toolchain, **language mode v5** (see Concurrency).
 - Build: SwiftPM + Xcode 16+ toolchain (SwiftUI macros; MLX ships prebuilt).
@@ -9,7 +9,8 @@ on-device model transcribes → text is inserted at the cursor of whatever app i
   `disable-library-validation` entitlement, and `make verify-bundle` proves the
   result launches.
 - STT: Qwen3-ASR 1.7B 4-bit through speech-swift/MLX (new-install default), or
-  FluidAudio 0.15.7 with Parakeet-TDT 0.6B v3 (smaller, ANE, live preview).
+  FluidAudio 0.15.7 with Parakeet-TDT 0.6B v3 (smaller, ANE, live preview), or
+  one of three opt-in OpenRouter speech models (batch only).
 - No sandbox (CGEvent posting + global key monitoring are incompatible with it).
 
 ## Module map & file ownership
@@ -24,6 +25,7 @@ Sources/MoDict/
 ├── Core/
 │   ├── DictationController.swift [core]    central state machine — owns all modules
 │   ├── SettingsStore.swift       [core]    user preferences (UserDefaults-backed)
+│   ├── OpenRouterKeychain.swift  [core]    macOS login Keychain credential
 │   ├── Permissions.swift         [core]    mic / accessibility / input-monitoring helpers
 │   ├── HotkeyMonitor.swift       [hotkey]  configurable-key CGEventTap (press/release/cancel)
 │   ├── MicrophoneCapture.swift   [audio]   AVAudioEngine → 16 kHz mono Float samples
@@ -34,7 +36,8 @@ Sources/MoDict/
 │   └── Transcription/
 │       ├── TranscriptionEngine.swift [stt] protocol + shared result/progress types
 │       ├── FluidAudioEngine.swift    [stt] FluidAudio/Parakeet implementation
-│       └── QwenAudioEngine.swift     [stt] speech-swift/Qwen3-ASR implementation
+│       ├── QwenAudioEngine.swift     [stt] speech-swift/Qwen3-ASR implementation
+│       └── OpenRouterEngine.swift    [stt] HTTPS batch transcription, in-memory WAV
 └── UI/
     ├── Theme.swift               [core]    design tokens (see Docs/DESIGN.md)
     ├── HUD/
@@ -182,9 +185,13 @@ Implementation notes (validated against FluidAudio 0.15.7 source — README snip
 enum SpeechModel: String, CaseIterable, Identifiable, Sendable {
     case qwen3ASR1_7B = "qwen3-asr-1.7b-4bit"   // fresh-install default
     case parakeetV3   = "parakeet-v3"           // keeps upgrading installs unchanged
+    case maiTranscribe2 = "microsoft/mai-transcribe-2"
+    case museVoiceTranscribe = "meta/muse-voice-transcribe-1.0"
+    case gptTranscribe = "openai/gpt-transcribe"
+    var isCloud: Bool
     var displayName / detail / attribution: String
     var approximateDownloadBytes: Int64
-    var modelsDirectory: URL
+    var modelsDirectory: URL?              // nil for cloud models
     var isDownloaded: Bool
 }
 ```
@@ -434,7 +441,7 @@ preview never crosses into the notch band. All visuals per Docs/DESIGN.md.
 @MainActor final class OnboardingController {
     init(app: AppModel)
     static func isNeeded(settings: SettingsStore) -> Bool
-    // true if onboarding is incomplete or the selected model is not downloaded
+    // true if onboarding is incomplete or a selected local model is not downloaded
     func present()   // activates app (.regular policy), shows window, restores .accessory on close
 }
 ```
@@ -459,7 +466,7 @@ The view drives real actions: `Permissions.*`, `app.controller.prepareEngine()`,
   `controller.activate()`.
 - `DictationController`: the only place that mutates dictation state. Public:
   `phase: Phase { idle, recording, transcribing }` (`@Published`),
-  `modelState: ModelState { unknown, needsDownload, downloading(ModelDownloadProgress), ready,
+  `modelState: ModelState { unknown, needsDownload, needsAPIKey, downloading(ModelDownloadProgress), ready,
   failed(String) }` (`@Published`), `userIssue: UserIssue?` (`@Published`, last actionable
   problem for the menu bar/HUD), `lastInsertedText: String?`,
   `partialTranscript: PartialTranscript?` (`@Published`, live transcript of the dictation in
@@ -471,8 +478,8 @@ The view drives real actions: `Permissions.*`, `app.controller.prepareEngine()`,
   `startDictation() -> Bool` (false when the begin
   is declined so the hotkey monitor never opens a phantom session),
   `stopDictationAndTranscribe()`, `cancelDictation()`. Transcription runs under a timeout
-  (`max(30 s, 4×audio + 5 s)`) so a wedged engine can never leave the app stuck in
-  `.transcribing`.
+  (`max(30 s, 4×audio + 5 s)` locally, 75 s minimum for cloud) so a wedged engine
+  cannot leave the app stuck in `.transcribing`.
   Streaming: `startDictation` opens a best-effort preview session (mic `onChunk` → session;
   `StreamingTranscriptAssembler` merges overlapping hypotheses into a cumulative document;
   updates hop to the main actor, drop when the recordingID is stale, get vocabulary applied,

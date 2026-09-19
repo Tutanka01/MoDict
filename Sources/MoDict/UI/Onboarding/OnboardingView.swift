@@ -103,7 +103,7 @@ struct OnboardingView: View {
         case 0:
             OnboardingWelcomeStep(key: settings.dictationKey)
         case 1:
-            OnboardingMicrophoneStep(granted: micGranted)
+            OnboardingMicrophoneStep(granted: micGranted, cloud: settings.speechModel.isCloud)
         case 2:
             OnboardingPermissionsStep(
                 accessibilityGranted: accessibilityGranted,
@@ -113,7 +113,7 @@ struct OnboardingView: View {
                 onOpenInputMonitoring: openInputMonitoring
             )
         case 3:
-            OnboardingModelStep(model: settings.speechModel, state: controller.modelState)
+            OnboardingModelStep(settings: settings, controller: controller)
         default:
             OnboardingTryItStep(text: $tryText, succeeded: tryItSucceeded,
                                 ready: allRequirementsReady, key: settings.dictationKey)
@@ -188,9 +188,11 @@ struct OnboardingView: View {
         case .downloading(let progress):
             return OnboardingPrimaryConfig(title: onboardingPhaseLabel(progress.phase), enabled: false) {}
         case .failed:
-            return OnboardingPrimaryConfig(title: "Retry download", enabled: true) { controller.prepareEngine() }
+            return OnboardingPrimaryConfig(title: "Retry model setup", enabled: true) { controller.prepareEngine() }
+        case .needsAPIKey:
+            return OnboardingPrimaryConfig(title: "Save an API key above", enabled: false) {}
         case .needsDownload, .unknown:
-            return OnboardingPrimaryConfig(title: "Download model", enabled: true) { controller.prepareEngine() }
+            return OnboardingPrimaryConfig(title: settings.speechModel.isCloud ? "Connect model" : "Download model", enabled: true) { controller.prepareEngine() }
         }
     }
 
@@ -235,7 +237,7 @@ struct OnboardingView: View {
         case 3:
             // Loading is cheap when the model is already on disk — start it eagerly
             // so the bar fills and the step self-advances without a second tap.
-            if settings.speechModel.isDownloaded {
+            if settings.speechModel.isDownloaded || (settings.speechModel.isCloud && settings.hasOpenRouterKey) {
                 controller.prepareEngine()
             }
             maybeAutoAdvance()
@@ -440,7 +442,7 @@ private struct OnboardingWelcomeStep: View {
                 Text("Dictate anywhere.")
                     .font(Theme.onboardingTitleFont)
                     .tracking(-0.5)
-                Text("Hold the \(key.inlineName) key, speak, release. Your words appear wherever your cursor is. 100% on-device.")
+                Text("Hold the \(key.inlineName) key, speak, release. Your words appear wherever your cursor is. Local by default; cloud is optional.")
                     .font(Theme.onboardingBodyFont)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -507,14 +509,15 @@ private struct OnboardingKeycap: View {
 
 private struct OnboardingMicrophoneStep: View {
     let granted: Bool
+    let cloud: Bool
 
     var body: some View {
         OnboardingStepScaffold(
             symbol: granted ? "checkmark.circle.fill" : "mic",
             title: "Microphone",
             message: granted
-                ? "Microphone access is ready. MoDict listens only while you hold the key."
-                : "Microphone access is required before MoDict can record. Audio is transcribed on your Mac and never leaves it."
+                ? "Microphone access is ready. MoDict records only during dictation."
+                : "Microphone access is required before MoDict can record. Audio stays on this Mac with local models\(cloud ? "; a selected cloud model sends it to OpenRouter." : ".")"
         ) {
             OnboardingStatusPill(
                 granted: granted,
@@ -601,19 +604,70 @@ private struct OnboardingPermissionCard: View {
 // MARK: - Step 4 · Speech model
 
 private struct OnboardingModelStep: View {
-    let model: SpeechModel
-    let state: DictationController.ModelState
+    @ObservedObject var settings: SettingsStore
+    @ObservedObject var controller: DictationController
+    @State private var pendingCloudSelection: SpeechModel?
+
+    private var model: SpeechModel { settings.speechModel }
+    private var state: DictationController.ModelState { controller.modelState }
+
+    private var selection: Binding<SpeechModel> {
+        Binding(get: { settings.speechModel }, set: { chosen in
+            if chosen.isCloud && chosen != settings.speechModel {
+                pendingCloudSelection = chosen
+            } else {
+                controller.selectModel(chosen)
+            }
+        })
+    }
 
     var body: some View {
-        OnboardingStepScaffold(
-            symbol: isReady ? "checkmark.circle.fill" : "arrow.down.circle",
-            title: "Speech model",
-            message: isReady
-                ? "\(model.displayName) is ready for on-device dictation."
-                : "The speech model is required before dictation can start. \(model.displayName) · \(model.detail) · ≈ \(sizeText)."
-        ) {
-            statusView
-                .frame(height: 60)
+        ScrollView {
+            OnboardingStepScaffold(
+                symbol: isReady ? "checkmark.circle.fill" : (model.isCloud ? "cloud" : "arrow.down.circle"),
+                title: "Speech model",
+                message: isReady
+                    ? "\(model.displayName) is ready for \(model.isCloud ? "cloud" : "on-device") dictation."
+                    : "Choose a model before dictation. \(model.displayName) · \(model.detail)\(model.isCloud ? "" : " · ≈ \(sizeText)")."
+            ) {
+                VStack(spacing: 10) {
+                    Picker("Model", selection: selection) {
+                        ForEach(SpeechModel.localModels) { item in
+                            Text(item.displayName).tag(item)
+                        }
+                        ForEach(SpeechModel.cloudModels) { item in
+                            Text("\(item.displayName) · Cloud *").tag(item)
+                        }
+                    }
+                    .frame(width: 340)
+                    .disabled(controller.isManagingModel)
+                    statusView.frame(height: 56)
+                    if model.isCloud {
+                        CloudPrivacyNotice()
+                            .frame(maxWidth: 380)
+                        OpenRouterKeySection(settings: settings, controller: controller)
+                            .frame(maxWidth: 380)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 16)
+        }
+        .confirmationDialog(
+            "Use \(pendingCloudSelection?.displayName ?? "cloud model")?",
+            isPresented: Binding(
+                get: { pendingCloudSelection != nil },
+                set: { if !$0 { pendingCloudSelection = nil } }
+            ),
+            presenting: pendingCloudSelection
+        ) { selected in
+            Button("Use cloud model") {
+                controller.selectModel(selected)
+                pendingCloudSelection = nil
+            }
+            Button("Cancel", role: .cancel) { pendingCloudSelection = nil }
+        } message: { _ in
+            Text("Each recording will be sent to OpenRouter and a model provider. Providers may retain or use data to improve models. API usage may cost money.")
         }
     }
 
@@ -642,6 +696,10 @@ private struct OnboardingModelStep: View {
             }
         case .ready:
             OnboardingStatusPill(granted: true, grantedText: "Speech model ready", pendingText: "")
+        case .needsAPIKey:
+            Text("Add your OpenRouter API key below to continue.")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
         case .failed(let message):
             VStack(spacing: 6) {
                 Label("Model not ready", systemImage: "exclamationmark.triangle")
@@ -655,7 +713,7 @@ private struct OnboardingModelStep: View {
                     .frame(maxWidth: 300)
             }
         case .needsDownload, .unknown:
-            Text("Required one-time download. Setup stays locked until the model is ready.")
+            Text(model.isCloud ? "Checking cloud model…" : "Required one-time download. Setup stays locked until the model is ready.")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -711,7 +769,7 @@ private struct OnboardingTryItStep: View {
                     Text("Try it")
                         .font(Theme.onboardingTitleFont)
                         .tracking(-0.5)
-                    Text("Click below, hold the \(key.inlineName) key and say something. Watch your words appear as you speak.")
+                    Text("Click below, hold the \(key.inlineName) key and say something. Release the key to transcribe and insert your words.")
                         .font(Theme.onboardingBodyFont)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)

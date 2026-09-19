@@ -1,11 +1,11 @@
 # MoDict
 
-**Hold right ⌘. Speak. Your words appear wherever your cursor is — 100% on-device.**
+**Hold right ⌘. Speak. Your words appear wherever your cursor is.**
 
 MoDict is a quiet, local dictation tool for macOS. Press and hold the right Command
 key, say something, let go, and the text is typed into whatever app is focused — your
-editor, your browser, a chat box, a terminal. Transcription runs locally on Apple Silicon.
-No cloud, no account, no telemetry. An open-source alternative to Wispr Flow and
+editor, your browser, a chat box, a terminal. Transcription runs locally on Apple Silicon
+by default; optional OpenRouter models use the cloud. No telemetry. An open-source alternative to Wispr Flow and
 superwhisper, built to disappear until you need it.
 
 [![CI](https://github.com/Tutanka01/MoDict/actions/workflows/build.yml/badge.svg)](https://github.com/Tutanka01/MoDict/actions/workflows/build.yml)
@@ -15,13 +15,13 @@ superwhisper, built to disappear until you need it.
 
 ## Why MoDict
 
-- **Your voice never leaves your Mac.** Audio is captured, transcribed, and discarded
-  locally. Nothing is uploaded, logged, or sent anywhere.
+- **Private by default.** The local models transcribe on your Mac. Selecting a cloud
+  model sends each finished recording to OpenRouter and its model provider.
 - **French-first by default.** New installations use Qwen3-ASR 1.7B locally through
   MLX for stronger multilingual and French transcription. Parakeet v3 remains available
   as a smaller, faster Neural Engine model with live preview.
-- **Models are yours to manage.** Select, download, reveal, or delete either model in
-  Settings → Model. Pinning the language you speak helps avoid decoding in another one.
+- **Choose your model.** Manage Qwen3-ASR and Parakeet locally, or select one of three
+  optional OpenRouter transcription models in Settings → Model.
 - **It stays out of the way.** A small three-line composition preview appears near your
   pointer and vanishes the instant the text lands. No dashboard, no Dock icon —
   just a menu bar glyph.
@@ -48,8 +48,7 @@ superwhisper, built to disappear until you need it.
 
    Without this step macOS shows *"MoDict is damaged and can't be opened"* — that
    message is Gatekeeper's wording for "unsigned download", not actual damage.
-4. Launch MoDict. Onboarding walks you through the three permissions and the one-time
-   speech-model download.
+4. Launch MoDict. Onboarding walks you through permissions and model setup.
 
 ### Option 2 — Build from source
 
@@ -81,12 +80,16 @@ rm -rf ~/Library/Application\ Support/MoDict       # downloaded Qwen models
 defaults delete com.modict.app                     # settings
 ```
 
+If you saved an OpenRouter key, remove it in Settings → Model before uninstalling,
+or delete the "MoDict OpenRouter API key" item in Keychain Access afterward. The
+Keychain item intentionally survives app deletion and restart.
+
 ## First launch
 
 MoDict asks for three system permissions. Each one maps to a single, visible job:
 
-- **Microphone** — to record your speech. The audio is transcribed on-device and then
-  thrown away.
+- **Microphone** — to record your speech. Local models process audio on-device;
+  a selected cloud model sends it to OpenRouter after you release the key.
 - **Input Monitoring** — to notice when you press and release the right ⌘ key. MoDict
   watches for that one key; it does not read or store what you type.
 - **Accessibility** — to paste the finished text into the app you're using, via a
@@ -94,8 +97,27 @@ MoDict asks for three system permissions. Each one maps to a single, visible job
 
 To be plain about what MoDict does **not** do: it is not a keylogger — the key monitor
 only tracks the right ⌘ (and swallows Esc while you're recording, so you can cancel).
-It makes no network connections at all, except a one-time download of the speech model
-from Hugging Face.
+With local models, normal dictation makes no network request; downloading a local
+model connects to Hugging Face. Cloud dictation requires an OpenRouter API key.
+
+## Optional cloud transcription
+
+In Settings → Model, choose **MAI-Transcribe 2** (`microsoft/mai-transcribe-2`),
+**Muse Voice Transcribe 1.0** (`meta/muse-voice-transcribe-1.0`), or
+**GPT Transcribe** (`openai/gpt-transcribe`). MoDict asks you to confirm the cloud
+switch. Paste your [OpenRouter API key](https://openrouter.ai/settings/keys) into the
+secure field and save it. The key is stored in this Mac's Keychain, survives app
+restarts, and is never placed in UserDefaults. You can replace or remove it at any
+time. A change of app signing identity may trigger a macOS Keychain access prompt.
+An invalid key is reported on the first transcription.
+
+Cloud dictation uploads the finished recording over HTTPS to OpenRouter, which routes
+it to a model provider. Providers may retain audio or use it to improve models,
+depending on their policies; [review OpenRouter's privacy policy](https://openrouter.ai/privacy/)
+and your account privacy settings before using it with sensitive speech. Usage can
+incur charges. Cloud recordings are limited to 10 minutes. Cloud models have no live
+transcript preview. Switching back to Qwen3-ASR or Parakeet keeps subsequent audio
+local.
 
 ## Usage
 
@@ -128,7 +150,8 @@ transcriptions live in the menu bar popover; click one to copy it again.
 1. A `CGEventTap` watches the right ⌘ key and starts capturing 16 kHz mono audio through
    `AVAudioEngine`.
 2. While you speak, the HUD follows recording; Parakeet also shows a rolling text preview.
-3. On release, the selected local model transcribes the full clip once.
+3. On release, the selected model transcribes the full clip once. A cloud model
+   sends the recording to OpenRouter only at this point.
 4. The text is placed on the pasteboard, pasted with a synthetic ⌘V at your cursor, and
    your previous clipboard is restored.
 
@@ -137,9 +160,13 @@ documented in [Docs/ARCHITECTURE.md](Docs/ARCHITECTURE.md).
 
 ## Privacy
 
-- Audio never leaves your Mac. Transcription runs entirely on-device.
-- No telemetry, no analytics, no accounts, no background phone-home.
-- The only network request is a model download from Hugging Face when you request it.
+- With a local model selected, dictation audio stays on your Mac. With a cloud model
+  selected, each finished recording is sent to OpenRouter and a model provider.
+- No telemetry, analytics, or background phone-home. Cloud use requires an OpenRouter account.
+- Local model downloads use Hugging Face. Cloud requests use OpenRouter only when you
+  dictate with a cloud model selected.
+- The OpenRouter key is stored in the macOS login Keychain, never in preferences
+  or logs. Audio requests use an ephemeral URL session without a disk cache.
 - Transcription history (last five items) is kept in memory only and is never written to
   disk.
 - The clipboard is snapshotted before each insert and restored afterward.

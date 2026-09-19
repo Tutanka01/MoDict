@@ -4,6 +4,14 @@ import Foundation
 enum SpeechModel: String, CaseIterable, Identifiable, Sendable {
     case qwen3ASR1_7B = "qwen3-asr-1.7b-4bit"
     case parakeetV3 = "parakeet-v3"
+    case maiTranscribe2 = "microsoft/mai-transcribe-2"
+    case museVoiceTranscribe = "meta/muse-voice-transcribe-1.0"
+    case gptTranscribe = "openai/gpt-transcribe"
+
+    static let localModels: [SpeechModel] = [.qwen3ASR1_7B, .parakeetV3]
+    static let cloudModels: [SpeechModel] = [.maiTranscribe2, .museVoiceTranscribe, .gptTranscribe]
+
+    var isCloud: Bool { Self.cloudModels.contains(self) }
 
     var id: String { rawValue }
 
@@ -11,6 +19,9 @@ enum SpeechModel: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .qwen3ASR1_7B: "Qwen3-ASR 1.7B"
         case .parakeetV3: "Parakeet v3"
+        case .maiTranscribe2: "MAI-Transcribe 2"
+        case .museVoiceTranscribe: "Muse Voice Transcribe 1.0"
+        case .gptTranscribe: "GPT Transcribe"
         }
     }
 
@@ -18,6 +29,9 @@ enum SpeechModel: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .qwen3ASR1_7B: "Best French quality · MLX · 4-bit"
         case .parakeetV3: "Fast · Neural Engine · live preview"
+        case .maiTranscribe2: "Microsoft · multilingual"
+        case .museVoiceTranscribe: "Meta · up to 10 minutes"
+        case .gptTranscribe: "OpenAI · high accuracy"
         }
     }
 
@@ -25,13 +39,15 @@ enum SpeechModel: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .qwen3ASR1_7B: QwenAudioEngine.approximateDownloadBytes
         case .parakeetV3: FluidAudioEngine.approximateDownloadBytes
+        case .maiTranscribe2, .museVoiceTranscribe, .gptTranscribe: 0
         }
     }
 
-    var modelsDirectory: URL {
+    var modelsDirectory: URL? {
         switch self {
         case .qwen3ASR1_7B: QwenAudioEngine.modelsDirectory
         case .parakeetV3: FluidAudioEngine.modelsDirectory
+        case .maiTranscribe2, .museVoiceTranscribe, .gptTranscribe: nil
         }
     }
 
@@ -39,6 +55,7 @@ enum SpeechModel: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .qwen3ASR1_7B: QwenAudioEngine.modelsExistOnDisk()
         case .parakeetV3: FluidAudioEngine.modelsExistOnDisk()
+        case .maiTranscribe2, .museVoiceTranscribe, .gptTranscribe: false
         }
     }
 
@@ -46,6 +63,7 @@ enum SpeechModel: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .qwen3ASR1_7B: "Qwen3-ASR 1.7B (Apache-2.0) · speech-swift (Apache-2.0)"
         case .parakeetV3: "NVIDIA Parakeet-TDT 0.6B v3 (CC-BY-4.0) · FluidAudio (Apache-2.0)"
+        case .maiTranscribe2, .museVoiceTranscribe, .gptTranscribe: "Cloud service via OpenRouter"
         }
     }
 }

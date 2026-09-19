@@ -36,6 +36,7 @@ final class SettingsStore: ObservableObject {
     @Published var speechModel: SpeechModel {
         didSet { defaults.set(speechModel.rawValue, forKey: "speechModel") }
     }
+    @Published private(set) var hasOpenRouterKey: Bool
     /// Persistent CoreAudio device UID; empty string = system default.
     @Published var inputDeviceUID: String {
         didSet { defaults.set(inputDeviceUID, forKey: "inputDeviceUID") }
@@ -73,6 +74,7 @@ final class SettingsStore: ObservableObject {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        hasOpenRouterKey = (try? OpenRouterKeychain.read()) != nil
         hotkeyMode = HotkeyMonitor.Mode(rawValue: defaults.string(forKey: "hotkeyMode") ?? "") ?? .pushToTalk
         dictationKey = DictationKey(rawValue: defaults.string(forKey: "dictationKey") ?? "") ?? .rightCommand
         playSounds = defaults.object(forKey: "playSounds") as? Bool ?? true
@@ -103,5 +105,15 @@ final class SettingsStore: ObservableObject {
         keepMicWarm = defaults.object(forKey: "keepMicWarm") as? Bool ?? false
         onboardingCompleted = defaults.bool(forKey: "onboardingCompleted")
         launchAtLogin = SMAppService.mainApp.status == .enabled
+    }
+
+    func saveOpenRouterKey(_ key: String) throws {
+        try OpenRouterKeychain.save(key)
+        hasOpenRouterKey = true
+    }
+
+    func removeOpenRouterKey() throws {
+        try OpenRouterKeychain.delete()
+        hasOpenRouterKey = false
     }
 }

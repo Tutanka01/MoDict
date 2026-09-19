@@ -43,6 +43,7 @@ struct MenuBarView: View {
     private var status: MenuBar.Status {
         MenuBar.Status.make(phase: controller.phase,
                             modelState: controller.modelState,
+                            model: settings.speechModel,
                             userIssue: controller.userIssue,
                             partial: controller.partialTranscript,
                             enabled: settings.dictationEnabled,
@@ -114,17 +115,19 @@ enum MenuBar {
 
         static func make(phase: DictationController.Phase,
                          modelState: DictationController.ModelState,
+                         model: SpeechModel,
                          userIssue: DictationController.UserIssue?,
                          partial: PartialTranscript?,
                          enabled: Bool,
                          dictationKey: DictationKey) -> Status {
             let readyText = "Ready · \(dictationKey.holdHint) to dictate"
+            let cloudDetail = model.isCloud ? "Cloud * · \(model.displayName). Audio sent on release." : nil
             switch phase {
             case .recording:
-                return Status(text: "Recording…", symbol: "waveform", isRecording: true,
+                return Status(text: "Recording…", symbol: "waveform", detail: cloudDetail, isRecording: true,
                               liveText: liveLine(partial))
             case .transcribing:
-                return Status(text: "Transcribing…", symbol: "waveform",
+                return Status(text: "Transcribing…", symbol: "waveform", detail: cloudDetail,
                               liveText: liveLine(partial))
             case .idle:
                 break
@@ -143,7 +146,7 @@ enum MenuBar {
 
             switch modelState {
             case .ready:
-                return Status(text: readyText, symbol: "waveform")
+                return Status(text: readyText, symbol: model.isCloud ? "cloud" : "waveform", detail: cloudDetail)
             case .downloading(let progress):
                 switch progress.phase {
                 case .downloading:
@@ -156,12 +159,16 @@ enum MenuBar {
                 case .compiling:
                     return Status(text: "Preparing speech model…", symbol: "arrow.down.circle")
                 case .ready:
-                    return Status(text: readyText, symbol: "waveform")
+                    return Status(text: readyText, symbol: model.isCloud ? "cloud" : "waveform", detail: cloudDetail)
                 }
             case .needsDownload:
                 return Status(text: "Speech model needs download",
                               symbol: "arrow.down.circle",
                               detail: "Keep MoDict open while the local model downloads.")
+            case .needsAPIKey:
+                return Status(text: "OpenRouter API key needed",
+                              symbol: "key",
+                              detail: "Add your key in Settings → Model.")
             case .unknown:
                 return Status(text: "Starting speech model…", symbol: "ellipsis.circle")
             case .failed(let message):
