@@ -13,6 +13,27 @@ and publishes `MoDict-X.Y.Z.dmg` on the
 - Highlight 2
 -->
 
+## v0.6.0 — 2026-09-19
+
+- **Cloud usage and cost tracking**: every OpenRouter response reports the exact
+  charge for that request, and MoDict now keeps a local ledger of dictations,
+  audio duration, tokens, and spend. Settings → Usage shows today's and
+  all-time totals plus a per-model breakdown, the menu bar can show spend next
+  to its icon (off by default), and each cloud dictation in the recent list
+  shows what it cost. Metrics only — transcription text never reaches the
+  ledger.
+- **No more macOS Keychain password prompts**: the OpenRouter key is stored in a
+  user-only (0600) file under `~/Library/Application Support/MoDict` instead of
+  the login Keychain. macOS identifies a self-signed build by the hash of the
+  binary, which changes on every rebuild, so it asked for the login password on
+  every Keychain read — at launch and before each cloud dictation. Upgrading
+  from 0.5.x: paste your key once in **Settings → Model**; the old "MoDict
+  OpenRouter API key" item is no longer read and can be deleted in Keychain
+  Access.
+- Settings gains a **Usage** tab (spend, per-model stats, menu-bar picker,
+  reveal/reset for the ledger file), and the cloud-privacy copy now states that
+  costs come from the provider's own report.
+
 ## v0.5.1 — 2026-09-19
 
 - Cloud dictation survives temporary OpenRouter congestion: rate limits and
