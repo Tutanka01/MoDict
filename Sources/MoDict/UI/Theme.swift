@@ -84,3 +84,54 @@ enum Theme {
     static let onboardingTitleFont = Font.system(size: 26, weight: .semibold)
     static let onboardingBodyFont = Font.system(size: 13)
 }
+
+/// The same mark and gesture guide across setup, settings, and the menu.
+struct AppGlyph: View {
+    var size: CGFloat = 40
+
+    var body: some View {
+        Image(systemName: "waveform")
+            .font(.system(size: size * 0.46, weight: .medium))
+            .foregroundStyle(.background)
+            .frame(width: size, height: size)
+            .background(.primary, in: RoundedRectangle(cornerRadius: size * 0.26))
+            .accessibilityHidden(true)
+    }
+}
+
+enum DictationGesture {
+    static func instruction(key: DictationKey, mode: HotkeyMonitor.Mode) -> String {
+        switch mode {
+        case .pushToTalk: "Hold \(key.inlineName), speak, then release to paste."
+        case .toggle: "Tap \(key.inlineName) to start. Tap again to paste."
+        case .hybrid: "Hold \(key.inlineName) to talk, or tap for hands-free."
+        }
+    }
+}
+
+struct ShortcutGuide: View {
+    let key: DictationKey
+    let mode: HotkeyMonitor.Mode
+
+    var body: some View {
+        HStack(spacing: 14) {
+            Image(systemName: key.keycapSymbol)
+                .font(.system(size: 23, weight: .medium))
+                .frame(width: 54, height: 50)
+                .background(.background, in: RoundedRectangle(cornerRadius: 11))
+                .overlay(RoundedRectangle(cornerRadius: 11).strokeBorder(.primary.opacity(0.12)))
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 5) {
+                Text(DictationGesture.instruction(key: key, mode: mode))
+                    .font(.system(size: 13, weight: .medium))
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("Esc to cancel · Paste into any app")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(16)
+        .background(.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 14))
+    }
+}

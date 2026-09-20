@@ -1,19 +1,16 @@
 import AppKit
 import SwiftUI
 
-/// The `MenuBarExtra` popover (style `.window`). A quiet, monochrome panel:
-/// a single status line, the last few dictations, and a small footer. No
-/// explicit backgrounds — the system window material shows through.
 struct MenuBarView: View {
-
     @ObservedObject private var controller: DictationController
     @ObservedObject private var settings: SettingsStore
     @ObservedObject private var history: HistoryStore
     @ObservedObject private var usage: UsageStore
-
-    /// Row that flashed a checkmark after being copied, plus the timer that clears it.
+    @Environment(\.openSettings) private var openSettings
+    @AppStorage("settingsPane") private var settingsPane: SettingsPane = .general
     @State private var copiedID: UUID?
     @State private var copyResetTask: Task<Void, Never>?
+    @State private var confirmingClear = false
 
     init(app: AppModel) {
         _controller = ObservedObject(wrappedValue: app.controller)
@@ -24,90 +21,172 @@ struct MenuBarView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            MenuBar.StatusRow(status: status) {
-                controller.prepareEngine()
+            HStack(spacing: 10) {
+                AppGlyph(size: 30)
+                Text("MoDict").font(.system(size: 15, weight: .semibold))
+                Spacer()
+                Button {
+                    controller.setDictationEnabled(!settings.dictationEnabled)
+                } label: {
+                    Label(settings.dictationEnabled ? "Pause" : "Resume",
+                          systemImage: settings.dictationEnabled ? "pause" : "play")
+                        .font(.system(size: 11, weight: .medium))
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .help(settings.dictationEnabled ? "Pause dictation" : "Resume dictation")
             }
+            .padding(16)
 
-            Divider().padding(.horizontal, 12)
+            MenuBar.StatusRow(status: status, onAction: performStatusAction)
+                .padding(.horizontal, 12)
 
+            Button { showSettings(.model) } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: settings.speechModel.isCloud ? "cloud" : "lock.shield")
+                    Text(settings.speechModel.isCloud ? "Cloud" : "On this Mac")
+                    Text("·")
+                    Text(settings.speechModel.displayName).lineLimit(1)
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold))
+                }
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Choose a speech model")
+
+            Divider().padding(.horizontal, 16)
             historySection
 
             if usage.snapshot.hasSpend {
-                Divider().padding(.horizontal, 12)
-                MenuBar.UsageSection(snapshot: usage.snapshot)
+                Divider().padding(.horizontal, 16)
+                Button { showSettings(.usage) } label: {
+                    HStack {
+                        Label("Today", systemImage: "chart.bar")
+                        Spacer()
+                        Text(UsageFormat.cost(usage.snapshot.todayUSD)).monospacedDigit()
+                        Text("USD").foregroundStyle(.tertiary)
+                        Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold))
+                    }
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .padding(16)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("View usage and all-time costs")
             }
 
-            Divider().padding(.horizontal, 12)
-
-            MenuBar.Footer(settings: settings, controller: controller)
+            Divider().padding(.horizontal, 16)
+            HStack {
+                Button { showSettings(.general) } label: {
+                    Label("Settings", systemImage: "gearshape")
+                }
+                .keyboardShortcut(",", modifiers: .command)
+                Spacer()
+                Button("Quit") { NSApplication.shared.terminate(nil) }
+                    .keyboardShortcut("q", modifiers: .command)
+            }
+            .buttonStyle(.plain)
+            .font(.system(size: 12))
+            .foregroundStyle(.secondary)
+            .padding(16)
         }
-        .frame(width: 300)
-        // Opening the popover is the natural "did my grant take?" moment after a
-        // trip to System Settings — reconcile stale permission issues right away.
+        .frame(width: 360)
+        .tint(.primary)
         .onAppear { controller.recheckPermissions() }
         .task { await usage.refresh() }
+        .onDisappear { copyResetTask?.cancel(); copiedID = nil }
+        .confirmationDialog("Clear recent dictations?", isPresented: $confirmingClear) {
+            Button("Clear recent dictations", role: .destructive) { history.clear() }
+        } message: {
+            Text("These copies will be removed. Text already pasted into your apps is unaffected.")
+        }
     }
 
     private var status: MenuBar.Status {
-        MenuBar.Status.make(phase: controller.phase,
-                            modelState: controller.modelState,
-                            model: settings.speechModel,
-                            userIssue: controller.userIssue,
-                            partial: controller.partialTranscript,
-                            enabled: settings.dictationEnabled,
-                            dictationKey: settings.dictationKey)
+        MenuBar.Status.make(phase: controller.phase, modelState: controller.modelState,
+                            model: settings.speechModel, userIssue: controller.userIssue,
+                            partial: controller.partialTranscript, enabled: settings.dictationEnabled,
+                            dictationKey: settings.dictationKey, mode: settings.hotkeyMode)
     }
 
-    @ViewBuilder
     private var historySection: some View {
-        if history.items.isEmpty {
-            MenuBar.EmptyHistory()
-        } else {
-            VStack(alignment: .leading, spacing: 2) {
-                HStack {
-                    Text("Recent")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Button("Clear") { history.clear() }
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("RECENT DICTATIONS")
+                    .font(.system(size: 10, weight: .semibold)).tracking(1)
+                Spacer()
+                if !history.items.isEmpty {
+                    Button("Clear") { confirmingClear = true }
                         .buttonStyle(.plain)
                         .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.horizontal, 14)
-                .padding(.top, 8)
-                .padding(.bottom, 2)
-
-                ForEach(history.items) { item in
-                    MenuBar.HistoryRow(item: item, copied: copiedID == item.id) {
-                        copy(item)
-                    }
                 }
             }
-            .padding(.bottom, 6)
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 16)
+            .padding(.top, 16)
+            if history.items.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Your next thought starts here.")
+                        .font(.system(size: 14, weight: .medium))
+                    Text("Dictate in any app. Your last five dictations will be here, ready to copy again.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(16)
+            } else {
+                ScrollView {
+                    VStack(spacing: 6) {
+                        ForEach(history.items) { item in
+                            MenuBar.HistoryRow(item: item, copied: copiedID == item.id) { copy(item) }
+                        }
+                    }
+                }
+                .frame(height: min(CGFloat(history.items.count) * 80, 320))
+                Label("This session only · Never saved to disk", systemImage: "lock")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+            }
+        }
+        .padding(.bottom, 6)
+    }
+
+    private func showSettings(_ pane: SettingsPane) {
+        settingsPane = pane
+        NSApp.activate(ignoringOtherApps: true)
+        openSettings()
+    }
+
+    private func performStatusAction() {
+        switch status.action {
+        case .retry, .download: controller.prepareEngine()
+        case .resume: controller.setDictationEnabled(true)
+        case .settings(let pane): showSettings(pane)
+        case nil: break
         }
     }
 
     private func copy(_ item: HistoryStore.Item) {
         history.copyToClipboard(item)
-        withAnimation(.easeInOut(duration: 0.15)) {
-            copiedID = item.id
-        }
+        copiedID = item.id
         copyResetTask?.cancel()
         copyResetTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 1_100_000_000)
+            try? await Task.sleep(for: .seconds(1.5))
             guard !Task.isCancelled else { return }
-            withAnimation(.easeInOut(duration: 0.2)) {
-                if copiedID == item.id { copiedID = nil }
-            }
+            copiedID = nil
         }
     }
 }
 
-// MARK: - Internal views (namespaced to avoid collisions in the single target)
-
 enum MenuBar {
-
     /// Everything the status line needs, derived from the controller's phase and
     /// model state (plus the master enable switch).
     struct Status {
@@ -116,7 +195,11 @@ enum MenuBar {
         var detail: String?
         var isRecording = false
         var isError = false
-        var showRetry = false
+        enum Action: Equatable {
+            case retry, download, resume, settings(SettingsPane)
+        }
+        var action: Action?
+        var actionTitle: String?
         var fraction: Double?
         /// One quiet line of the live transcript while recording (tail only).
         var liveText: String?
@@ -127,9 +210,11 @@ enum MenuBar {
                          userIssue: DictationController.UserIssue?,
                          partial: PartialTranscript?,
                          enabled: Bool,
-                         dictationKey: DictationKey) -> Status {
-            let readyText = "Ready · \(dictationKey.holdHint) to dictate"
-            let cloudDetail = model.isCloud ? "Cloud * · \(model.displayName). Audio sent on release." : nil
+                         dictationKey: DictationKey,
+                         mode: HotkeyMonitor.Mode = .pushToTalk) -> Status {
+            let readyText = "Ready when you are"
+            let readyDetail = DictationGesture.instruction(key: dictationKey, mode: mode)
+            let cloudDetail = model.isCloud ? "Audio is sent to OpenRouter when you stop." : nil
             switch phase {
             case .recording:
                 return Status(text: "Recording…", symbol: "waveform", detail: cloudDetail, isRecording: true,
@@ -142,19 +227,21 @@ enum MenuBar {
             }
 
             guard enabled else {
-                return Status(text: "Dictation off", symbol: "pause.circle")
+                return Status(text: "Dictation paused", symbol: "pause.circle", detail: "Resume whenever you are ready to speak.", action: .resume, actionTitle: "Resume dictation")
             }
 
             if case .ready = modelState, let userIssue {
                 return Status(text: userIssue.statusTitle,
                               symbol: userIssue.symbol,
                               detail: userIssue.statusDetail,
-                              isError: true)
+                              isError: true,
+                              action: issueAction(userIssue),
+                              actionTitle: issueAction(userIssue) == nil ? nil : "Review settings")
             }
 
             switch modelState {
             case .ready:
-                return Status(text: readyText, symbol: model.isCloud ? "cloud" : "waveform", detail: cloudDetail)
+                return Status(text: readyText, symbol: model.isCloud ? "cloud" : "waveform", detail: readyDetail)
             case .downloading(let progress):
                 switch progress.phase {
                 case .downloading:
@@ -167,16 +254,18 @@ enum MenuBar {
                 case .compiling:
                     return Status(text: "Preparing speech model…", symbol: "arrow.down.circle")
                 case .ready:
-                    return Status(text: readyText, symbol: model.isCloud ? "cloud" : "waveform", detail: cloudDetail)
+                    return Status(text: readyText, symbol: model.isCloud ? "cloud" : "waveform", detail: readyDetail)
                 }
             case .needsDownload:
                 return Status(text: "Speech model needs download",
                               symbol: "arrow.down.circle",
-                              detail: "Keep MoDict open while the local model downloads.")
+                              detail: "Download once to transcribe on this Mac.",
+                              action: .download, actionTitle: "Download model")
             case .needsAPIKey:
                 return Status(text: "OpenRouter API key needed",
                               symbol: "key",
-                              detail: "Add your key in Settings → Model.")
+                              detail: "Connect your account to use this cloud model.",
+                              action: .settings(.model), actionTitle: "Add API key")
             case .unknown:
                 return Status(text: "Starting speech model…", symbol: "ellipsis.circle")
             case .failed(let message):
@@ -184,7 +273,20 @@ enum MenuBar {
                               symbol: "exclamationmark.triangle",
                               detail: modelFailureDetail(message),
                               isError: true,
-                              showRetry: true)
+                              action: .retry, actionTitle: "Retry setup")
+            }
+        }
+
+        private static func issueAction(_ issue: DictationController.UserIssue) -> Action? {
+            switch issue {
+            case .microphonePermissionMissing, .inputMonitoringPermissionMissing, .accessibilityPermissionMissing:
+                .settings(.general)
+            case .microphoneMissing, .microphoneUnavailable:
+                .settings(.dictation)
+            case .transcriptionFailed, .transcriptionTimedOut, .cloudTranscriptionFailed:
+                .settings(.model)
+            case .secureInputBlocked, .insertionFailed:
+                nil
             }
         }
 
@@ -206,93 +308,48 @@ enum MenuBar {
 
     struct StatusRow: View {
         let status: Status
-        let onRetry: () -> Void
+        let onAction: () -> Void
 
         var body: some View {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 8) {
-                    indicator
-                    Text(status.text)
-                        .font(.system(size: 13))
-                        .foregroundStyle(status.isError ? Color.red : Color.primary)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                    Spacer(minLength: 0)
-                    if status.showRetry {
-                        Button("Retry", action: onRetry)
-                            .buttonStyle(.plain)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 9) {
+                    if status.isRecording {
+                        Circle().fill(Theme.recordingDot).frame(width: 7, height: 7)
+                    } else {
+                        Image(systemName: status.symbol)
+                            .foregroundStyle(status.isError ? Color.red : Color.secondary)
                     }
+                    Text(status.text)
+                        .font(.system(size: 15, weight: .semibold))
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 if let detail = status.detail {
                     Text(detail)
-                        .font(.system(size: 11))
+                        .font(.system(size: 12))
                         .foregroundStyle(.secondary)
-                        .lineLimit(2)
+                        .lineLimit(3)
                         .fixedSize(horizontal: false, vertical: true)
+                        .help(detail)
                 }
                 if let live = status.liveText {
-                    // The words in flight — one quiet line, newest words kept.
                     Text(live)
-                        .font(.system(size: 11))
+                        .font(.system(size: 12))
                         .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                        .lineLimit(2)
                         .truncationMode(.head)
                 }
                 if let fraction = status.fraction {
-                    ProgressView(value: fraction)
-                        .progressViewStyle(.linear)
-                        .tint(.primary)
+                    ProgressView(value: fraction).tint(.primary)
+                        .accessibilityLabel("Model download")
+                }
+                if let title = status.actionTitle {
+                    Button(title, action: onAction)
+                        .controlSize(.small)
                 }
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-        }
-
-        @ViewBuilder
-        private var indicator: some View {
-            if status.isRecording {
-                RecordingDot()
-            } else {
-                Image(systemName: status.symbol)
-                    .font(.system(size: 13))
-                    .foregroundStyle(status.isError ? Color.red : Color.secondary)
-                    .frame(width: 16)
-            }
-        }
-    }
-
-    /// The single red accent allowed at rest — a small pulsing recording dot.
-    struct RecordingDot: View {
-        @State private var pulsing = false
-
-        var body: some View {
-            Circle()
-                .fill(Theme.recordingDot)
-                .frame(width: 6, height: 6)
-                .opacity(pulsing ? 0.35 : 1)
-                .frame(width: 16)
-                .onAppear {
-                    withAnimation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true)) {
-                        pulsing = true
-                    }
-                }
-        }
-    }
-
-    struct EmptyHistory: View {
-        var body: some View {
-            VStack(spacing: 8) {
-                Image(systemName: "waveform")
-                    .font(.system(size: 22, weight: .light))
-                    .foregroundStyle(.secondary)
-                Text("Your dictations will appear here")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 22)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(16)
+            .background(.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 14))
         }
     }
 
@@ -300,148 +357,72 @@ enum MenuBar {
         let item: HistoryStore.Item
         let copied: Bool
         let onCopy: () -> Void
-
         @State private var hovering = false
+        @State private var showingText = false
 
         var body: some View {
-            Button(action: onCopy) {
-                HStack(alignment: .top, spacing: 8) {
-                    Text(item.text)
-                        .font(.system(size: 13))
-                        .foregroundStyle(.primary)
-                        .lineLimit(2)
-                        .truncationMode(.tail)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    if let cost = item.costUSD, cost > 0 {
-                        Text(UsageFormat.cost(cost))
-                            .font(.system(size: 10).monospacedDigit())
-                            .foregroundStyle(.tertiary)
-                            .lineLimit(1)
-                            .padding(.top, 1)
-                    }
-                    trailingIcon
-                        .frame(width: 14)
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 7)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(Color.primary.opacity(hovering ? 0.06 : 0))
-                        .padding(.horizontal, 6)
-                )
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .onHover { hovering = $0 }
-        }
-
-        @ViewBuilder
-        private var trailingIcon: some View {
-            if copied {
-                Image(systemName: "checkmark")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.secondary)
-            } else if hovering {
-                Image(systemName: "doc.on.doc")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.secondary)
-            }
-        }
-    }
-
-    /// Cloud spend at the foot of the recent list: today, all time, then the
-    /// models that actually cost money. The caller hides it until there is spend.
-    struct UsageSection: View {
-        let snapshot: UsageSnapshot
-
-        private var paidModels: [UsageSnapshot.ModelUsage] {
-            Array(snapshot.models.filter { $0.isCloud && $0.costUSD > 0 }.prefix(3))
-        }
-
-        var body: some View {
-            VStack(alignment: .leading, spacing: 2) {
-                HStack {
-                    Text("Usage")
-                        .font(.system(size: 11, weight: .medium))
+            HStack(alignment: .center, spacing: 4) {
+                Button(action: onCopy) {
+                    VStack(alignment: .leading, spacing: 7) {
+                        Text(item.text)
+                            .font(.system(size: 13))
+                            .foregroundStyle(.primary)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
+                        HStack(spacing: 6) {
+                            Text(item.date, style: .time)
+                            if let cost = item.costUSD, cost > 0 {
+                                Text("·")
+                                Text(UsageFormat.cost(cost)).monospacedDigit()
+                            }
+                            Spacer()
+                            Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
+                        }
+                        .font(.system(size: 10))
                         .foregroundStyle(.secondary)
-                    Spacer()
-                    Text("USD")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.tertiary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(10)
+                    .contentShape(Rectangle())
                 }
-                .padding(.horizontal, 14)
-                .padding(.top, 8)
-                .padding(.bottom, 2)
+                .buttonStyle(.plain)
+                .accessibilityLabel("Copy dictation: \(item.text)")
+                .accessibilityValue(copied ? "Copied" : "")
 
-                row("Today", amount: snapshot.todayUSD, emphasized: true)
-                row("Total", amount: snapshot.totalUSD, emphasized: true)
-
-                ForEach(paidModels) { model in
-                    row(displayName(for: model), amount: model.costUSD, emphasized: false)
-                }
-            }
-            .padding(.bottom, 6)
-        }
-
-        private func displayName(for model: UsageSnapshot.ModelUsage) -> String {
-            SpeechModel(rawValue: model.modelID)?.displayName ?? model.modelID
-        }
-
-        private func row(_ label: String, amount: Decimal, emphasized: Bool) -> some View {
-            HStack(spacing: 8) {
-                Text(label)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Spacer(minLength: 8)
-                Text(UsageFormat.cost(amount))
-                    .font(.system(size: 12).monospacedDigit())
-                    .foregroundStyle(emphasized ? Color.primary : Color.secondary)
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 2)
-        }
-    }
-
-    struct Footer: View {
-        @ObservedObject var settings: SettingsStore
-        @ObservedObject var controller: DictationController
-
-        var body: some View {
-            HStack(spacing: 16) {
-                SettingsLink {
-                    Image(systemName: "gearshape")
+                Button { showingText = true } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 14))
+                        .frame(width: 28, height: 32)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
-                .help("Settings")
-                .simultaneousGesture(TapGesture().onEnded {
-                    NSApp.activate(ignoringOtherApps: true)
-                })
-
-                Button {
-                    controller.setDictationEnabled(!settings.dictationEnabled)
-                } label: {
-                    Image(systemName: "power")
+                .accessibilityLabel("Read full dictation")
+                .help("Read full dictation")
+                .popover(isPresented: $showingText) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack {
+                            Text("Dictation").font(.headline)
+                            Spacer()
+                            Button(copied ? "Copied" : "Copy", action: onCopy)
+                        }
+                        ScrollView {
+                            Text(item.text)
+                                .font(.system(size: 14))
+                                .lineSpacing(4)
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .frame(maxHeight: 320)
+                    }
+                    .padding(20)
+                    .frame(width: 380)
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(settings.dictationEnabled ? Color.primary : Color.secondary)
-                .help(settings.dictationEnabled ? "Disable dictation" : "Enable dictation")
-
-                Spacer()
-
-                Button("Quit") {
-                    NSApplication.shared.terminate(nil)
-                }
-                .buttonStyle(.plain)
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
             }
-            .font(.system(size: 14))
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
+            .padding(.trailing, 4)
+            .background(.primary.opacity(hovering ? 0.055 : 0.025), in: RoundedRectangle(cornerRadius: 10))
+            .padding(.horizontal, 12)
+            .onHover { hovering = $0 }
         }
     }
 }

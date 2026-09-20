@@ -37,7 +37,7 @@ System font only (SF Pro). Sizes:
 - Onboarding body: `.system(size: 13)`, `.secondary`
 - HUD label (error/hint text): `.system(size: 12, weight: .medium)`
 - Menu bar list items: `.system(size: 13)`
-- Settings: standard SwiftUI `Form` styles.
+- Settings: 28 pt semibold pane titles, 13 pt descriptions, native grouped `Form` controls.
 
 ## The HUD (composition preview)
 
@@ -66,7 +66,7 @@ application while recording.
 | State | Content | Notes |
 |---|---|---|
 | `recording` | red pulse + 7 waveform bars, “Listening”, and the exact stop gesture | “Release to paste” for Hold; hands-free changes to “Press again to paste” |
-| `transcribing` | 3 dots, “Preparing paste”, “Released”, and the last preview | the target application is still untouched |
+| `transcribing` | 3 dots, “Preparing paste”, “Esc to cancel”, and the last preview | the target application is still untouched |
 | `success` | `checkmark.circle.fill` + “Pasted” | shown ~700 ms then hidden |
 | `error(message)` | contextual red symbol + primary label | up to two lines; shown ~2.2 s |
 
@@ -105,37 +105,35 @@ application while recording.
 
 ## Menu bar
 
-- Icon: SF Symbol `waveform` (template, monochrome). While recording, switch to
-  `waveform` with `.symbolEffect(.variableColor.iterative)`; while the model downloads, show
-  `arrow.down.circle` with the same treatment. Optional cost badge (Settings → Usage → Menu
-  bar, off by default): today's or all-time cloud spend in tabular figures, hidden while
-  there is nothing to show. The `MenuBarExtra` label is cached by the system until hover —
-  the badge is best-effort, never a live clock.
-- `MenuBarExtra` with `.menuBarExtraStyle(.window)` — a small popover, not a system menu:
-  - Status row: "Ready · hold right ⌘ to dictate" / "Downloading model… 42%" / "Recording…"
-    While recording/transcribing with a live transcript, one quiet line of the words in
-    flight appears beneath the status (11 pt, `.secondary`, single line, head-truncated).
-  - Last 5 transcriptions (two-line truncated). Click → copies to clipboard, brief check.
-    A cloud dictation also shows its own cost beside the text (10 pt, `.tertiary`, tabular).
-    Empty state: `waveform` glyph + "Your dictations will appear here".
-  - Usage (only once cloud spend exists): "Today" and "Total" in 12 pt tabular figures with
-    adaptive decimals — `$0.0005` under a cent, `$0.012` under a dollar, `$1.24` above,
-    `<$0.0001` below the smallest shown amount — then up to three cloud models that cost
-    money, sorted by spend. `USD` is stated once in the section header. Labels `.secondary`,
-    totals `.primary`, model rows `.secondary`.
-  - Footer row: gear icon (Settings), power toggle (Enable/Disable), quit.
-- Popover width: 300 pt. Everything `.ultraThinMaterial`-friendly, no explicit backgrounds.
+The 360 pt popover is a compact place to check readiness and recover your words.
+- App mark and a labeled Pause / Resume button.
+- A rounded status card: the real gesture for the selected key and activation mode,
+  live text during dictation, download progress, or the current issue. Download, Retry,
+  Resume and Review settings actions appear only when relevant. Error details are capped
+  at three lines with the full message available on hover.
+- A model row states **On this Mac** or **Cloud** and opens Model settings directly.
+- The last five dictations show two lines of text, a timestamp, optional request cost,
+  and a visible Copy action. Copy changes to Copied for 1.5 seconds. The ellipsis opens
+  the full, selectable text in a scrollable popover. The list scrolls at 320 pt so the
+  footer stays reachable on smaller screens. Clearing history requires confirmation.
+- Empty history explains how to start; populated history states that these copies live
+  only in memory for the current session.
+- Today's cloud spend appears only once spend exists and opens the full Usage pane.
+- Labeled Settings and Quit actions support Command-comma and Command-Q.
+
+The system window material shows through. Semantic foregrounds, soft neutral cards,
+and 10–16 pt spacing keep light and dark appearances consistent.
 
 ## Onboarding (first launch)
 
 A single fixed window, 520 × 600, centered, non-resizable, hidden title bar
-(`.titlebarAppearsTransparent`, no title). Five steps, progress dots at the bottom,
+(`.titlebarAppearsTransparent`, no title). Five named steps with a segmented progress line at the top,
 primary button full-width at bottom (`.borderedProminent`, `.controlSize(.large)` — tint
 `.primary` monochrome look via `.tint(.primary)`).
 
-1. **Welcome** — App icon glyph, "Dictate anywhere." headline, one line: "Hold the right ⌘ key,
-   speak, release. Your words appear wherever your cursor is. Local by default; cloud is optional."
-   A small animated rendition of the right-⌘ keycap pressing.
+1. **Welcome** — shared app glyph, “Less typing. More you.” headline, short local/cloud
+   explanation, and a physical keycap with the actual gesture for the current activation mode.
+   Creator attribution remains below the primary action.
 2. **Microphone** — why + button "Allow microphone" → `AVCaptureDevice.requestAccess`.
    Card flips to granted state with checkmark automatically.
 3. **Accessibility & Input Monitoring** — two permission cards, each with status and an
@@ -144,8 +142,8 @@ primary button full-width at bottom (`.borderedProminent`, `.controlSize(.large)
 4. **Speech model** — Qwen3-ASR 1.7B by default; local and cloud models are selectable.
    Local models show download size and progress. Cloud selection needs a privacy confirmation,
    persistent warning, and a SecureField for an OpenRouter key stored locally.
-5. **Try it** — a real `TextEditor` in the window: "Click below, hold right ⌘ and say
-   something. Release the key to transcribe and insert your words." On first successful insertion:
+5. **Try it** — an automatically focused `TextEditor` with mode-aware gesture instructions.
+   Arrow keys remain available for text editing; Command-[ goes back. On first successful insertion:
    checkmark spring animation + "That's it. MoDict lives in your menu bar."
    Button "Start dictating" closes onboarding.
 
@@ -154,42 +152,32 @@ action. Nothing else. Steps advance automatically when their condition is met.
 
 ## Settings
 
-Standard `Settings` scene, `TabView` style like System Settings. Small — flat hierarchy,
-strong defaults, every option earns its place:
+A native Settings scene with a 208 pt sidebar and scrollable grouped forms. Preferred
+size 820 × 680 pt, minimum 780 × 620 pt. A large pane title and short purpose statement
+anchor each page. The sidebar keeps the selected model and local/cloud status visible.
+Menu actions navigate directly to the relevant pane; the last pane is remembered.
 
-- **General**: activation (Hold to talk / Tap to toggle / Hybrid — segmented, Hold default,
-  one-line explanations), dictation key, Launch at login, Sounds, Haptics.
-  - **Dictation key**: a horizontal row of four monochrome keycaps (Right Command / Option /
-    Control / Globe) — real buttons, keyboard focusable, each cap **46 × 38 pt**, continuous
-    corner radius 9, the key's SF Symbol (16 pt medium) and a 10 pt caption beneath.
-    Unselected: fill `Color.primary` 3%, hairline stroke 12% at 1 pt, symbol `.secondary`.
-    Selected: fill 10%, stroke 60% at 1.5 pt, symbol `.primary`, plus a soft lift
-    (`Color.black` 10%, radius 3, y 1) — the only cap with a shadow. Press feedback:
-    scale 0.96 with `.spring(response: 0.25, dampingFraction: 0.7)`; selection animates with
-    `Theme.stateSpring`. A `.secondary` caption below states the resulting gesture ("Hold right ⌘
-    to dictate, or tap to toggle.", adapted to key + mode). When Globe is chosen, a second calm
-    caption points to System Settings › Keyboard → "Press 🌐 key to" → "Do Nothing".
-- **Dictation**: Language (Automatic + list from engine), Microphone (System default + list),
-  Vocabulary (personal text replacements), Restore clipboard after insert, HUD position
-  (Near pointer default / Bottom / Top).
-  - **Vocabulary**: a compact list of rules the model applies to every transcription before
-    insertion. Each row has two native text fields of equal width joined by an `arrow.right`
-    glyph (10 pt medium, `.tertiary`, fixed 16 pt column) — "Heard" → "Replace with" —
-    plus an always-visible `minus.circle.fill` remove control that works with keyboard and
-    pointer. An "Add rule" button (`plus.circle`, `.secondary`) appends an empty rule and
-    focuses its first field; edits persist as the user types. Empty state is one `.secondary`
-    caption ("Teach MoDict names and terms it mishears. \"mo dict\" becomes \"MoDict\".");
-    footer: "Applied to every dictation, before the text is inserted." Monochrome, no explicit
-    backgrounds.
-- **Model**: prominent current-model summary; direct Use actions beside each local and cloud
-  model; local download/delete/reveal; local API key field before cloud choices; explicit
-  audio/privacy warning.
-- **Usage**: cloud spend (Today / All time / dictations), a per-model list with dictation
-  counts, audio duration and cost (local rows read "Free"), the menu bar cost picker, and
-  Reset / Reveal for the local ledger file. Footer: metrics only, never transcription text.
-- **About**: version, GitHub link, and licenses for FluidAudio, Parakeet, speech-swift, and Qwen3-ASR.
+- **General**: a shared shortcut guide, Hold to talk / Tap to toggle / Hybrid segmented
+  control, four keyboard-accessible keycaps, Launch at login, and live permission status.
+  Keycap selection reconfigures the existing event tap immediately. Globe retains the
+  native keyboard-setting conflict hint. Unselected labels remain legible in dark mode.
+- **Dictation**: language, microphone, and clipboard restoration. Unplugged microphones
+  retain their selection with an Unavailable device label.
+- **Vocabulary**: a clear example in the empty state, editable Heard → Replace with rows,
+  remove buttons, and Add rule with automatic focus. Rules persist as they are edited.
+- **Model**: current-model summary; local download/use/delete/reveal actions; OpenRouter
+  key management and cloud choices. Existing deletion and cloud-privacy confirmations stay.
+- **Appearance**: three visual position choices (Near pointer / Bottom / Top), sounds and
+  haptics. Position choices expose their selection to assistive technology.
+- **Usage**: prominent today/all-time USD spend and total dictation count, per-model
+  metrics, optional menu-bar spend, reset confirmation, and reveal in Finder.
+- **About**: shared mark, version, creator attribution, repository link and licenses.
 
-Window 560 × 540 pt. Native grouped forms scroll within each pane when needed.
+No new dependencies or settings affecting transcription. The app follows the system
+appearance. Reduce Motion suppresses setup transitions, HUD scaling/shake, animated
+transcribing dots and keycap compression. The recording waveform retains a slower,
+non-oscillating level update. The HUD shows an Esc cancellation hint and preserves its
+existing non-activating panel, stable preview width and screen-edge anchoring.
 
 ## Sound & haptics
 

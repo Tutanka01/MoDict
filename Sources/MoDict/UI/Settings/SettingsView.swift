@@ -2,13 +2,41 @@ import SwiftUI
 import AppKit
 import Combine
 
-/// Native macOS Settings panes; grouped forms and semantic colors follow the
-/// system appearance in both light and dark mode.
+enum SettingsPane: String, CaseIterable, Identifiable {
+    case general, dictation, vocabulary, model, appearance, usage, about
+
+    var id: String { rawValue }
+    var title: String { rawValue.capitalized }
+    var symbol: String {
+        switch self {
+        case .general: "keyboard"
+        case .dictation: "mic"
+        case .vocabulary: "text.book.closed"
+        case .model: "cpu"
+        case .appearance: "macwindow"
+        case .usage: "chart.bar"
+        case .about: "info.circle"
+        }
+    }
+    var subtitle: String {
+        switch self {
+        case .general: "A shortcut that feels like second nature."
+        case .dictation: "Your voice in. Your words out."
+        case .vocabulary: "Make names, terms, and expressions your own."
+        case .model: "Choose where and how your voice becomes text."
+        case .appearance: "A little presence. Exactly where you need it."
+        case .usage: "Your activity and costs, kept on this Mac."
+        case .about: "A quiet tool for your everyday words."
+        }
+    }
+}
+
 struct SettingsView: View {
     @ObservedObject private var settings: SettingsStore
     @ObservedObject private var controller: DictationController
     @ObservedObject private var vocabulary: VocabularyStore
     @ObservedObject private var usage: UsageStore
+    @AppStorage("settingsPane") private var selection: SettingsPane = .general
 
     init(app: AppModel) {
         _settings = ObservedObject(wrappedValue: app.settings)
@@ -18,24 +46,83 @@ struct SettingsView: View {
     }
 
     var body: some View {
-        TabView {
-            SettingsGeneralTab(settings: settings, controller: controller)
-                .tabItem { Label("General", systemImage: "gearshape") }
+        HStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 24) {
+                HStack(spacing: 10) {
+                    AppGlyph(size: 34)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("MoDict").font(.system(size: 16, weight: .semibold))
+                        Text("Make yourself heard.").font(.system(size: 10)).foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.top, 12)
 
-            SettingsDictationTab(settings: settings, vocabulary: vocabulary)
-                .tabItem { Label("Dictation", systemImage: "mic") }
+                VStack(spacing: 4) {
+                    ForEach(SettingsPane.allCases) { pane in
+                        Button { selection = pane } label: {
+                            Label(pane.title, systemImage: pane.symbol)
+                                .font(.system(size: 13, weight: selection == pane ? .semibold : .regular))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 11)
+                                .contentShape(RoundedRectangle(cornerRadius: 9))
+                                .background(.primary.opacity(selection == pane ? 0.09 : 0), in: RoundedRectangle(cornerRadius: 9))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityAddTraits(selection == pane ? .isSelected : [])
+                    }
+                }
+                Spacer()
+                VStack(alignment: .leading, spacing: 7) {
+                    Label(settings.speechModel.isCloud ? "Cloud transcription" : "On-device transcription",
+                          systemImage: settings.speechModel.isCloud ? "cloud" : "lock.shield")
+                        .font(.system(size: 11, weight: .medium))
+                    Text(settings.speechModel.displayName)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+                .padding(12)
+            }
+            .padding(12)
+            .frame(width: 208)
+            .background(.ultraThinMaterial)
 
-            SettingsModelTab(settings: settings, controller: controller)
-                .tabItem { Label("Model", systemImage: "cpu") }
+            Divider()
 
-            SettingsUsageTab(settings: settings, usage: usage)
-                .tabItem { Label("Usage", systemImage: "chart.bar") }
-
-            SettingsAboutTab()
-                .tabItem { Label("About", systemImage: "info.circle") }
+            VStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: 7) {
+                    Text(selection.title)
+                        .font(.system(size: 28, weight: .semibold))
+                        .tracking(-0.7)
+                        .accessibilityAddTraits(.isHeader)
+                    Text(selection.subtitle)
+                        .font(.system(size: 13))
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 28)
+                .padding(.top, 28)
+                .padding(.bottom, 10)
+                pane
+                    .id(selection)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            .background(Color(nsColor: .windowBackgroundColor))
         }
         .tint(.primary)
-        .frame(width: 560, height: 540)
+        .frame(minWidth: 780, idealWidth: 820, minHeight: 620, idealHeight: 680)
+    }
+
+    @ViewBuilder private var pane: some View {
+        switch selection {
+        case .general: SettingsGeneralTab(settings: settings, controller: controller)
+        case .dictation: SettingsDictationTab(settings: settings)
+        case .vocabulary: SettingsVocabularyTab(vocabulary: vocabulary)
+        case .model: SettingsModelTab(settings: settings, controller: controller)
+        case .appearance: SettingsAppearanceTab(settings: settings)
+        case .usage: SettingsUsageTab(settings: settings, usage: usage)
+        case .about: SettingsAboutTab()
+        }
     }
 }
 
@@ -45,56 +132,31 @@ private struct SettingsGeneralTab: View {
     @ObservedObject var settings: SettingsStore
     @ObservedObject var controller: DictationController
 
-    private var activationExplanation: String {
-        let name = settings.dictationKey.inlineName
-        switch settings.hotkeyMode {
-        case .pushToTalk:
-            return "Hold the \(name) key while speaking, then release to insert."
-        case .toggle:
-            return "Press the \(name) key to start, and again to stop."
-        case .hybrid:
-            return "Hold to talk, or tap once to keep recording hands-free, then tap again to stop."
-        }
-    }
-
-    private var dictationKeyCaption: String {
-        let name = settings.dictationKey.inlineName
-        switch settings.hotkeyMode {
-        case .pushToTalk: return "Hold \(name) to dictate."
-        case .toggle: return "Tap \(name) to start, tap again to stop."
-        case .hybrid: return "Hold \(name) to dictate, or tap to toggle."
-        }
-    }
-
     var body: some View {
         Form {
             Section {
+                ShortcutGuide(key: settings.dictationKey, mode: settings.hotkeyMode)
+                    .listRowInsets(EdgeInsets())
                 Picker("Activation", selection: $settings.hotkeyMode) {
-                    Text("Hold").tag(HotkeyMonitor.Mode.pushToTalk)
-                    Text("Toggle").tag(HotkeyMonitor.Mode.toggle)
+                    Text("Hold to talk").tag(HotkeyMonitor.Mode.pushToTalk)
+                    Text("Tap to toggle").tag(HotkeyMonitor.Mode.toggle)
                     Text("Hybrid").tag(HotkeyMonitor.Mode.hybrid)
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
                 // Reload the live event tap so the new mode takes effect immediately.
                 .onChange(of: settings.hotkeyMode) { controller.refreshHotkeyConfiguration() }
-            } header: {
-                Text("Activation")
-            } footer: {
-                Text(activationExplanation)
-            }
 
-            Section {
                 DictationKeyPicker(selection: $settings.dictationKey) {
                     controller.refreshHotkeyConfiguration()
                 }
                 .frame(maxWidth: .infinity, alignment: .center)
                 .padding(.vertical, 4)
             } header: {
-                Text("Dictation key")
+                Text("Your shortcut")
             } footer: {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(dictationKeyCaption)
+                    Text("Use the key on the right side of your keyboard, or choose Globe (fn).")
                     if settings.dictationKey == .globe {
                         Text("If the Globe key is assigned in System Settings › Keyboard, set “Press 🌐 key to” to “Do Nothing” to avoid conflicts.")
                     }
@@ -103,8 +165,6 @@ private struct SettingsGeneralTab: View {
 
             Section("App behavior") {
                 Toggle("Launch at login", isOn: $settings.launchAtLogin)
-                Toggle("Play sounds", isOn: $settings.playSounds)
-                Toggle("Haptic feedback", isOn: $settings.hapticFeedback)
             }
 
             SettingsPermissionsSection(controller: controller)
@@ -166,7 +226,7 @@ private struct DictationKeyPicker: View {
                             y: Theme.keycapSelectedShadowY)
                 Text(key.shortName)
                     .font(.system(size: 10))
-                    .foregroundStyle(selected ? .secondary : .tertiary)
+                    .foregroundStyle(.secondary)
             }
         }
     }
@@ -174,9 +234,11 @@ private struct DictationKeyPicker: View {
 
 /// Tap-down feedback for the keycaps: compress like a physical key, spring back.
 private struct KeycapPressStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .scaleEffect(configuration.isPressed ? Theme.keycapPressedScale : 1)
+            .scaleEffect(configuration.isPressed && !reduceMotion ? Theme.keycapPressedScale : 1)
             .animation(Theme.keycapPressSpring, value: configuration.isPressed)
     }
 }
@@ -245,9 +307,7 @@ private struct SettingsPermissionsSection: View {
 
 private struct SettingsDictationTab: View {
     @ObservedObject var settings: SettingsStore
-    @ObservedObject var vocabulary: VocabularyStore
     @State private var inputDevices: [MicrophoneCapture.InputDevice] = []
-    @FocusState private var focusedRule: UUID?
 
     private var selectedDeviceMissing: Bool {
         !settings.inputDeviceUID.isEmpty
@@ -281,10 +341,43 @@ private struct SettingsDictationTab: View {
             }
 
             Section {
+                Toggle("Restore clipboard after insert", isOn: $settings.restoreClipboard)
+            } header: {
+                Text("Output")
+            } footer: {
+                Text("Your previous clipboard is restored after MoDict pastes your words.")
+            }
+        }
+        .formStyle(.grouped)
+        .onAppear { inputDevices = MicrophoneCapture.availableInputDevices() }
+    }
+}
+
+private struct SettingsVocabularyTab: View {
+    @ObservedObject var vocabulary: VocabularyStore
+    @FocusState private var focusedRule: UUID?
+
+    var body: some View {
+        Form {
+            Section {
                 if vocabulary.rules.isEmpty {
-                    Text("Teach MoDict names and terms it mishears. \"mo dict\" becomes \"MoDict\".")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 16) {
+                        Label("A little context goes a long way.", systemImage: "text.book.closed")
+                            .font(.system(size: 15, weight: .medium))
+                        Text("Correct names or terms MoDict mishears. Your replacements are applied automatically after every dictation.")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                        HStack(spacing: 14) {
+                            Text("mo dict").foregroundStyle(.secondary)
+                            Image(systemName: "arrow.right").foregroundStyle(.secondary)
+                            Text("MoDict").fontWeight(.medium)
+                        }
+                        .font(.system(size: 14))
+                        .padding(14)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
+                    }
+                    .padding(.vertical, 10)
                 } else {
                     ForEach($vocabulary.rules) { $rule in
                         VocabularyRuleRow(rule: $rule, focusedRule: $focusedRule) {
@@ -310,21 +403,54 @@ private struct SettingsDictationTab: View {
                 Text("Applied to every dictation, before the text is inserted.")
             }
 
+        }
+        .formStyle(.grouped)
+    }
+}
+
+private struct SettingsAppearanceTab: View {
+    @ObservedObject var settings: SettingsStore
+
+    var body: some View {
+        Form {
             Section {
-                Toggle("Restore clipboard after insert", isOn: $settings.restoreClipboard)
-                Picker("HUD position", selection: $settings.hudPosition) {
-                    Text("Near pointer").tag(SettingsStore.HUDPosition.nearPointer)
-                    Text("Bottom").tag(SettingsStore.HUDPosition.bottomCenter)
-                    Text("Top").tag(SettingsStore.HUDPosition.topCenter)
+                HStack(spacing: 12) {
+                    positionOption(.nearPointer, title: "Near pointer", symbol: "cursorarrow")
+                    positionOption(.bottomCenter, title: "Bottom", symbol: "rectangle.bottomthird.inset.filled")
+                    positionOption(.topCenter, title: "Top", symbol: "rectangle.topthird.inset.filled")
                 }
+                .padding(.vertical, 8)
             } header: {
-                Text("Output")
+                Text("Recording indicator")
             } footer: {
-                Text("Near pointer shows a private preview where you are working; text is pasted only when dictation stops.")
+                Text("A private preview appears while you speak. Your words are pasted only when you stop.")
+            }
+            Section {
+                Toggle("Play sounds", isOn: $settings.playSounds)
+                Toggle("Haptic feedback", isOn: $settings.hapticFeedback)
+            } header: {
+                Text("Feedback")
+            } footer: {
+                Text("Subtle cues when dictation starts and finishes. Appearance follows your Mac’s light or dark mode.")
             }
         }
         .formStyle(.grouped)
-        .onAppear { inputDevices = MicrophoneCapture.availableInputDevices() }
+    }
+
+    private func positionOption(_ position: SettingsStore.HUDPosition, title: String, symbol: String) -> some View {
+        Button { settings.hudPosition = position } label: {
+            VStack(spacing: 12) {
+                Image(systemName: symbol).font(.system(size: 27, weight: .light))
+                Text(title).font(.system(size: 12, weight: .medium))
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 20)
+            .background(.primary.opacity(settings.hudPosition == position ? 0.07 : 0.025), in: RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.primary.opacity(settings.hudPosition == position ? 0.5 : 0.08)))
+            .contentShape(RoundedRectangle(cornerRadius: 12))
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(settings.hudPosition == position ? .isSelected : [])
     }
 }
 
@@ -674,11 +800,16 @@ private struct SettingsUsageTab: View {
     var body: some View {
         Form {
             Section {
-                LabeledContent("Today", value: UsageFormat.cost(usage.snapshot.todayUSD))
-                LabeledContent("All time", value: UsageFormat.cost(usage.snapshot.totalUSD))
-                LabeledContent("Dictations", value: "\(usage.snapshot.totalCount)")
+                HStack(spacing: 24) {
+                    metric("Today · USD", value: UsageFormat.cost(usage.snapshot.todayUSD))
+                    Divider()
+                    metric("All time · USD", value: UsageFormat.cost(usage.snapshot.totalUSD))
+                    Divider()
+                    metric("Dictations", value: "\(usage.snapshot.totalCount)")
+                }
+                .padding(.vertical, 14)
             } header: {
-                Text("Cloud spend")
+                Text("Overview")
             } footer: {
                 Text(spendFooter)
             }
@@ -729,6 +860,16 @@ private struct SettingsUsageTab: View {
         } message: {
             Text("This clears stored dictation counts, durations, tokens, and costs. It cannot be undone.")
         }
+    }
+
+    private func metric(_ title: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title).font(.system(size: 11)).foregroundStyle(.secondary)
+            Text(value).font(.system(size: 23, weight: .semibold)).monospacedDigit()
+                .lineLimit(1).minimumScaleFactor(0.65)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
     }
 
     private var spendFooter: String {
@@ -788,18 +929,11 @@ private struct SettingsAboutTab: View {
         Form {
             Section {
                 HStack(spacing: 12) {
-                    RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .fill(.quaternary)
-                        .frame(width: 40, height: 40)
-                        .overlay {
-                            Image(systemName: "waveform")
-                                .font(.system(size: 18, weight: .medium))
-                                .foregroundStyle(.primary)
-                        }
+                    AppGlyph(size: 52)
 
                     VStack(alignment: .leading, spacing: 2) {
                         Text("MoDict")
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(.system(size: 21, weight: .semibold))
                         Text(versionText)
                             .font(.system(size: 12))
                             .foregroundStyle(.secondary)

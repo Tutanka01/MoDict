@@ -29,10 +29,11 @@ final class HUDModel: ObservableObject {
 
 struct HUDRootView: View {
     @ObservedObject var model: HUDModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         HUDCompositionCard(model: model)
-            .scaleEffect(model.contentScale, anchor: scaleAnchor)
+            .scaleEffect(reduceMotion ? 1 : model.contentScale, anchor: scaleAnchor)
             .opacity(model.contentOpacity)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: alignment)
             .padding(edgeInsets)
@@ -77,6 +78,7 @@ struct HUDRootView: View {
 private struct HUDCompositionCard: View {
     @ObservedObject var model: HUDModel
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         content
@@ -89,7 +91,7 @@ private struct HUDCompositionCard: View {
                 x: 0,
                 y: Theme.hudShadowY
             )
-            .keyframeAnimator(initialValue: CGFloat(0), trigger: model.shakeToken) { view, x in
+            .keyframeAnimator(initialValue: CGFloat(0), trigger: reduceMotion ? 0 : model.shakeToken) { view, x in
                 view.offset(x: x)
             } keyframes: { _ in
                 KeyframeTrack {
@@ -100,8 +102,8 @@ private struct HUDCompositionCard: View {
                     CubicKeyframe(0, duration: 0.05)
                 }
             }
-            .animation(Theme.stateSpring, value: model.state)
-            .animation(Theme.textSpring, value: hasPreview)
+            .animation(reduceMotion ? nil : Theme.stateSpring, value: model.state)
+            .animation(reduceMotion ? nil : Theme.textSpring, value: hasPreview)
     }
 
     private var cardShape: RoundedRectangle {
@@ -128,8 +130,8 @@ private struct HUDCompositionCard: View {
     private var recordingContent: some View {
         VStack(alignment: .leading, spacing: hasPreview ? 11 : 0) {
             HStack(spacing: 9) {
-                TimelineView(.animation) { context in
-                    let t = context.date.timeIntervalSinceReferenceDate
+                TimelineView(.animation(minimumInterval: reduceMotion ? 0.15 : 1.0 / 30)) { context in
+                    let t = reduceMotion ? 0 : context.date.timeIntervalSinceReferenceDate
                     HStack(spacing: 8) {
                         HUDRecordingDot(t: t)
                         HUDWaveform(level: model.level, t: t)
@@ -145,6 +147,13 @@ private struct HUDCompositionCard: View {
                     .font(Theme.hudHintFont)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+                Text("esc")
+                    .font(.system(size: 9, weight: .medium, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 3)
+                    .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(.primary.opacity(0.12)))
+                    .accessibilityLabel("Escape to cancel")
             }
 
             if let partial = model.partial, !partial.isEmpty {
@@ -163,7 +172,7 @@ private struct HUDCompositionCard: View {
                 Text("Preparing paste")
                     .font(Theme.hudTitleFont)
                 Spacer(minLength: 12)
-                Text("Released")
+                Text("Esc to cancel")
                     .font(Theme.hudHintFont)
                     .foregroundStyle(.secondary)
             }
@@ -246,6 +255,7 @@ private struct HUDPreviewText: View {
             .clipped()
             .mask { topFade }
             .accessibilityLabel("Dictation preview")
+            .accessibilityValue(Text(display))
     }
 
     /// One attributed string in one Text node — no per-update view insertion.
@@ -339,9 +349,11 @@ private struct HUDWaveform: View {
 }
 
 private struct HUDTranscribingDots: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     var body: some View {
-        TimelineView(.animation) { context in
-            let t = context.date.timeIntervalSinceReferenceDate
+        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: reduceMotion)) { context in
+            let t = reduceMotion ? 0 : context.date.timeIntervalSinceReferenceDate
             HStack(spacing: 4) {
                 ForEach(0..<3, id: \.self) { index in
                     let value = 0.5 + 0.5 * sin(t * 4.4 - Double(index) * 0.7)

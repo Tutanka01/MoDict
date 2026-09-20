@@ -52,7 +52,7 @@ Sources/MoDict/
     │   ├── OnboardingController.swift [onboarding] window lifecycle
     │   └── OnboardingView.swift       [onboarding] 5 steps (see DESIGN.md)
     └── Settings/
-        └── SettingsView.swift    [settings] tabs: General / Dictation / Model / Usage / About
+        └── SettingsView.swift    [settings] sidebar: General / Dictation / Vocabulary / Model / Appearance / Usage / About
 ```
 
 Root-level (owner **packaging**): `Makefile`, `Support/Info.plist.in`,

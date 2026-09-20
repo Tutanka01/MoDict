@@ -441,3 +441,17 @@ Blockers:
 Notes:
 - 
 ```
+
+
+## Interface refresh
+
+- [ ] Light and dark: sidebar selection, keycap labels and model privacy status remain legible.
+- [ ] Settings: all seven panes remain reachable by keyboard; grouped content scrolls at the minimum window size.
+- [ ] Hold / Toggle / Hybrid with each key: the menu and setup guide show the matching gesture.
+- [ ] Menu: Pause / Resume updates the controller; model and cost rows open the correct Settings pane.
+- [ ] Missing model, key or permission: the status action downloads, retries, resumes or opens the relevant pane.
+- [ ] Recent: five long dictations scroll without hiding the footer; Copy confirms; ellipsis reveals selectable full text.
+- [ ] Clear history: cancelling preserves entries; confirming clears only the in-memory history.
+- [ ] Setup: named steps advance correctly; the trial editor receives focus and arrow keys edit text.
+- [ ] Reduce Motion: no setup scale transition, HUD shake or keycap compression; the input level still updates.
+- [ ] HUD: the Esc hint fits with both Release to paste and Press again to paste, with and without preview.

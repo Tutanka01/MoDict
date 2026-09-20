@@ -8,6 +8,7 @@ import Combine
 /// `OnboardingController`.
 struct OnboardingView: View {
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private let onFinish: () -> Void
     @ObservedObject private var settings: SettingsStore
     @ObservedObject private var controller: DictationController
@@ -48,38 +49,58 @@ struct OnboardingView: View {
         .onChange(of: step) { _, newStep in handleStepChange(to: newStep) }
         .onChange(of: controller.modelState) { _, _ in handleReadinessChange() }
         .onChange(of: controller.lastInsertedText) { _, newValue in handleInsertion(newValue) }
-        .onKeyPress(.leftArrow) { goBack(); return .handled }
-        .onKeyPress(.rightArrow) { continueIfReady(); return .handled }
+        .transaction { if reduceMotion { $0.animation = nil } }
     }
 
     // MARK: Chrome
 
     private var topBar: some View {
-        HStack {
-            if step > 0 {
-                Button(action: goBack) {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(.secondary)
+        VStack(spacing: 24) {
+            HStack(spacing: 10) {
+                if step > 0 {
+                    Button(action: goBack) {
+                        Image(systemName: "chevron.left")
+                            .frame(width: 24, height: 24)
+                    }
+                    .buttonStyle(.plain)
+                    .keyboardShortcut("[", modifiers: .command)
+                    .accessibilityLabel("Previous setup step")
                 }
-                .buttonStyle(.plain)
-                .keyboardShortcut("[", modifiers: .command)
-                .help("Back")
+                Text("MoDict").font(.system(size: 14, weight: .semibold))
+                Spacer()
+                Text("SETUP  ·  \(step + 1) OF \(Self.stepCount)")
+                    .font(.system(size: 10, weight: .medium)).tracking(1)
+                    .foregroundStyle(.secondary)
             }
-            Spacer()
+            HStack(spacing: 8) {
+                ForEach(Array(["Welcome", "Microphone", "Access", "Model", "Try it"].enumerated()), id: \.offset) { index, title in
+                    VStack(alignment: .leading, spacing: 8) {
+                        Capsule().fill(.primary.opacity(index <= step ? 0.8 : 0.1)).frame(height: 3)
+                        Text(title)
+                            .font(.system(size: 10, weight: index == step ? .semibold : .regular))
+                            .foregroundStyle(index == step ? .primary : .secondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Setup step \(step + 1) of \(Self.stepCount)")
         }
-        .frame(height: 44)
-        .padding(.horizontal, 22)
+        .padding(.horizontal, 32)
+        .padding(.top, 24)
+        .padding(.bottom, 12)
     }
 
     private var footer: some View {
-        VStack(spacing: 18) {
-            OnboardingProgressDots(count: Self.stepCount, current: step)
+        VStack(spacing: 12) {
             primaryButton
+            Text(step == 0 ? "Created by Mohamad El Akhal" : "Your settings can be changed at any time.")
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
         }
         .padding(.horizontal, 40)
-        .padding(.bottom, 30)
-        .padding(.top, 8)
+        .padding(.bottom, 24)
+        .padding(.top, 12)
     }
 
     private var primaryButton: some View {
@@ -101,7 +122,7 @@ struct OnboardingView: View {
     private func stepView(for step: Int) -> some View {
         switch step {
         case 0:
-            OnboardingWelcomeStep(key: settings.dictationKey)
+            OnboardingWelcomeStep(key: settings.dictationKey, mode: settings.hotkeyMode)
         case 1:
             OnboardingMicrophoneStep(granted: micGranted, cloud: settings.speechModel.isCloud)
         case 2:
@@ -116,7 +137,7 @@ struct OnboardingView: View {
             OnboardingModelStep(settings: settings, controller: controller)
         default:
             OnboardingTryItStep(text: $tryText, succeeded: tryItSucceeded,
-                                ready: allRequirementsReady, key: settings.dictationKey)
+                                ready: allRequirementsReady, key: settings.dictationKey, mode: settings.hotkeyMode)
         }
     }
 
@@ -206,20 +227,6 @@ struct OnboardingView: View {
     private func goBack() {
         guard step > 0 else { return }
         withAnimation(Theme.stateSpring) { step -= 1 }
-    }
-
-    private func continueIfReady() {
-        switch step {
-        case 0:
-            advance()
-        case 1...3:
-            guard conditionMet(for: step) else { return }
-            advance()
-        case 4:
-            finish()
-        default:
-            break
-        }
     }
 
     private func finish() {
@@ -395,22 +402,6 @@ private struct OnboardingIconBadge: View {
     }
 }
 
-private struct OnboardingProgressDots: View {
-    let count: Int
-    let current: Int
-
-    var body: some View {
-        HStack(spacing: 7) {
-            ForEach(0..<count, id: \.self) { index in
-                Circle()
-                    .fill(index == current ? Color.primary : Color.secondary.opacity(0.3))
-                    .frame(width: index == current ? 7 : 6, height: index == current ? 7 : 6)
-            }
-        }
-        .animation(Theme.stateSpring, value: current)
-    }
-}
-
 private struct OnboardingStatusPill: View {
     let granted: Bool
     let grantedText: String
@@ -434,74 +425,25 @@ private struct OnboardingStatusPill: View {
 
 private struct OnboardingWelcomeStep: View {
     let key: DictationKey
+    let mode: HotkeyMonitor.Mode
 
     var body: some View {
-        VStack(spacing: 22) {
-            OnboardingAppGlyph()
-            VStack(spacing: 10) {
-                Text("Dictate anywhere.")
-                    .font(Theme.onboardingTitleFont)
-                    .tracking(-0.5)
-                Text("Hold the \(key.inlineName) key, speak, release. Your words appear wherever your cursor is. Local by default; cloud is optional.")
-                    .font(Theme.onboardingBodyFont)
+        VStack(spacing: 24) {
+            AppGlyph(size: 64)
+            VStack(spacing: 12) {
+                Text("Less typing.\nMore you.")
+                    .font(.system(size: 38, weight: .semibold))
+                    .tracking(-1.4)
+                    .multilineTextAlignment(.center)
+                Text("Turn a thought into text, wherever you work.\nPrivate, on-device dictation. Cloud if you choose.")
+                    .font(.system(size: 13))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: 360)
             }
-            OnboardingKeycap(key: key)
-                .padding(.top, 4)
+            ShortcutGuide(key: key, mode: mode)
         }
-        .padding(.horizontal, 44)
-    }
-}
-
-/// The app icon rendered in-app: near-black squircle, five white waveform bars,
-/// center tallest (see DESIGN.md · App icon).
-private struct OnboardingAppGlyph: View {
-    private let heights: [CGFloat] = [14, 22, 32, 22, 14]
-
-    var body: some View {
-        HStack(spacing: 5) {
-            ForEach(heights.indices, id: \.self) { index in
-                Capsule()
-                    .fill(.white)
-                    .frame(width: 5, height: heights[index])
-            }
-        }
-        .frame(width: 74, height: 74)
-        .background(
-            RoundedRectangle(cornerRadius: 17, style: .continuous)
-                .fill(Color(red: 0.078, green: 0.078, blue: 0.078))
-        )
-        .shadow(color: Theme.hudShadow, radius: 14, y: 6)
-    }
-}
-
-/// A small keycap of the chosen dictation key that gently presses in a loop.
-private struct OnboardingKeycap: View {
-    let key: DictationKey
-    @State private var pressed = false
-
-    var body: some View {
-        VStack(spacing: 7) {
-            Image(systemName: key.keycapSymbol)
-                .font(.system(size: 16, weight: .medium))
-                .foregroundStyle(.secondary)
-                .frame(width: 46, height: 42)
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).strokeBorder(Color.primary.opacity(0.12)))
-                .offset(y: pressed ? 3 : 0)
-                .shadow(color: Theme.hudShadow, radius: pressed ? 2 : 6, y: pressed ? 1 : 4)
-            Text(key.inlineName)
-                .font(.system(size: 11))
-                .foregroundStyle(.tertiary)
-        }
-        .onAppear {
-            withAnimation(.easeInOut(duration: 0.75).repeatForever(autoreverses: true)) {
-                pressed = true
-            }
-        }
+        .padding(.horizontal, 40)
     }
 }
 
@@ -713,7 +655,7 @@ private struct OnboardingModelStep: View {
                     .frame(maxWidth: 300)
             }
         case .needsDownload, .unknown:
-            Text(model.isCloud ? "Checking cloud model…" : "Required one-time download. Setup stays locked until the model is ready.")
+            Text(model.isCloud ? "Checking cloud model…" : "One download, then you can dictate offline.")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -738,6 +680,7 @@ private struct OnboardingTryItStep: View {
     let succeeded: Bool
     let ready: Bool
     let key: DictationKey
+    let mode: HotkeyMonitor.Mode
 
     var body: some View {
         VStack(spacing: 20) {
@@ -769,7 +712,7 @@ private struct OnboardingTryItStep: View {
                     Text("Try it")
                         .font(Theme.onboardingTitleFont)
                         .tracking(-0.5)
-                    Text("Click below, hold the \(key.inlineName) key and say something. Release the key to transcribe and insert your words.")
+                    Text(DictationGesture.instruction(key: key, mode: mode))
                         .font(Theme.onboardingBodyFont)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
@@ -786,9 +729,13 @@ private struct OnboardingTryItStep: View {
 
 private struct OnboardingTryEditor: View {
     @Binding var text: String
+    @FocusState private var focused: Bool
 
     var body: some View {
         TextEditor(text: $text)
+            .focused($focused)
+            .onAppear { focused = true }
+            .accessibilityLabel("Try dictation here")
             .font(.system(size: 14))
             .scrollContentBackground(.hidden)
             .padding(10)
