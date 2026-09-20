@@ -66,7 +66,7 @@ application while recording.
 | State | Content | Notes |
 |---|---|---|
 | `recording` | red pulse + 7 waveform bars, “Listening”, and the exact stop gesture | “Release to paste” for Hold; hands-free changes to “Press again to paste” |
-| `transcribing` | 3 dots, “Preparing paste”, “Esc to cancel”, and the last preview | the target application is still untouched |
+| `transcribing` | 3 dots, “Preparing paste”, the esc chip, and the last preview | the target application is still untouched |
 | `success` | `checkmark.circle.fill` + “Pasted” | shown ~700 ms then hidden |
 | `error(message)` | contextual red symbol + primary label | up to two lines; shown ~2.2 s |
 
@@ -106,16 +106,18 @@ application while recording.
 ## Menu bar
 
 The 360 pt popover is a compact place to check readiness and recover your words.
-- App mark and a labeled Pause / Resume button.
+- App mark; a single source of truth for the enable switch: the status card offers
+  Resume when paused, and the footer holds a labeled Pause Dictation action (⌘P).
 - A rounded status card: the real gesture for the selected key and activation mode,
   live text during dictation, download progress, or the current issue. Download, Retry,
-  Resume and Review settings actions appear only when relevant. Error details are capped
-  at three lines with the full message available on hover.
+  Resume and open-settings actions appear only when relevant, and name their
+  destination (Open General settings, Choose a microphone, Review model settings).
+  Error details are capped at three lines with the full message available on hover.
 - A model row states **On this Mac** or **Cloud** and opens Model settings directly.
 - The last five dictations show two lines of text, a timestamp, optional request cost,
   and a visible Copy action. Copy changes to Copied for 1.5 seconds. The ellipsis opens
-  the full, selectable text in a scrollable popover. The list scrolls at 320 pt so the
-  footer stays reachable on smaller screens. Clearing history requires confirmation.
+  the full, selectable text in a scrollable popover. The list sizes to its rows and
+  caps at five before scrolling. Clearing history requires confirmation.
 - Empty history explains how to start; populated history states that these copies live
   only in memory for the current session.
 - Today's cloud spend appears only once spend exists and opens the full Usage pane.

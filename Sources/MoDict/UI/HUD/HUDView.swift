@@ -130,7 +130,7 @@ private struct HUDCompositionCard: View {
     private var recordingContent: some View {
         VStack(alignment: .leading, spacing: hasPreview ? 11 : 0) {
             HStack(spacing: 9) {
-                TimelineView(.animation(minimumInterval: reduceMotion ? 0.15 : 1.0 / 30)) { context in
+                TimelineView(.animation(minimumInterval: 1.0 / 30, paused: reduceMotion)) { context in
                     let t = reduceMotion ? 0 : context.date.timeIntervalSinceReferenceDate
                     HStack(spacing: 8) {
                         HUDRecordingDot(t: t)
@@ -147,13 +147,7 @@ private struct HUDCompositionCard: View {
                     .font(Theme.hudHintFont)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
-                Text("esc")
-                    .font(.system(size: 9, weight: .medium, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 3)
-                    .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(.primary.opacity(0.12)))
-                    .accessibilityLabel("Escape to cancel")
+                escapeChip
             }
 
             if let partial = model.partial, !partial.isEmpty {
@@ -172,9 +166,11 @@ private struct HUDCompositionCard: View {
                 Text("Preparing paste")
                     .font(Theme.hudTitleFont)
                 Spacer(minLength: 12)
-                Text("Esc to cancel")
+                Text("Preparing")
                     .font(Theme.hudHintFont)
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                escapeChip
             }
 
             if let partial = model.partial, !partial.isEmpty {
@@ -211,6 +207,18 @@ private struct HUDCompositionCard: View {
         }
         .padding(.horizontal, Theme.hudHorizontalPadding)
         .padding(.vertical, 12)
+    }
+
+    /// The one swallowed key: a small keycap glyph next to the state hint,
+    /// shown for the whole cancellable window (recording and transcription).
+    private var escapeChip: some View {
+        Text("esc")
+            .font(.system(size: 9, weight: .medium, design: .monospaced))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 3)
+            .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(.primary.opacity(0.12)))
+            .accessibilityLabel("Escape to cancel")
     }
 
     private var hasPreview: Bool {

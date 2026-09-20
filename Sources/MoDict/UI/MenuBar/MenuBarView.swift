@@ -25,16 +25,6 @@ struct MenuBarView: View {
                 AppGlyph(size: 30)
                 Text("MoDict").font(.system(size: 15, weight: .semibold))
                 Spacer()
-                Button {
-                    controller.setDictationEnabled(!settings.dictationEnabled)
-                } label: {
-                    Label(settings.dictationEnabled ? "Pause" : "Resume",
-                          systemImage: settings.dictationEnabled ? "pause" : "play")
-                        .font(.system(size: 11, weight: .medium))
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .help(settings.dictationEnabled ? "Pause dictation" : "Resume dictation")
             }
             .padding(16)
 
@@ -82,12 +72,18 @@ struct MenuBarView: View {
             }
 
             Divider().padding(.horizontal, 16)
+
             HStack {
                 Button { showSettings(.general) } label: {
                     Label("Settings", systemImage: "gearshape")
                 }
                 .keyboardShortcut(",", modifiers: .command)
                 Spacer()
+                Button("Pause Dictation") {
+                    controller.setDictationEnabled(false)
+                }
+                .disabled(!settings.dictationEnabled)
+                .keyboardShortcut("p", modifiers: .command)
                 Button("Quit") { NSApplication.shared.terminate(nil) }
                     .keyboardShortcut("q", modifiers: .command)
             }
@@ -147,8 +143,14 @@ struct MenuBarView: View {
                             MenuBar.HistoryRow(item: item, copied: copiedID == item.id) { copy(item) }
                         }
                     }
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 6)
                 }
-                .frame(height: min(CGFloat(history.items.count) * 80, 320))
+                // Size to the rows' natural height, capped at five-ish entries
+                // before the list scrolls. A fixed row estimate leaves dead space
+                // under short entries.
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxHeight: 310)
                 Label("This session only · Never saved to disk", systemImage: "lock")
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
@@ -236,7 +238,7 @@ enum MenuBar {
                               detail: userIssue.statusDetail,
                               isError: true,
                               action: issueAction(userIssue),
-                              actionTitle: issueAction(userIssue) == nil ? nil : "Review settings")
+                              actionTitle: issueActionTitle(userIssue))
             }
 
             switch modelState {
@@ -285,6 +287,21 @@ enum MenuBar {
                 .settings(.dictation)
             case .transcriptionFailed, .transcriptionTimedOut, .cloudTranscriptionFailed:
                 .settings(.model)
+            case .secureInputBlocked, .insertionFailed:
+                nil
+            }
+        }
+
+        /// Name the destination, not the gesture — the button opens a specific
+        /// settings pane, so the label should say which one.
+        private static func issueActionTitle(_ issue: DictationController.UserIssue) -> String? {
+            switch issue {
+            case .microphonePermissionMissing, .inputMonitoringPermissionMissing, .accessibilityPermissionMissing:
+                "Open General settings"
+            case .microphoneMissing, .microphoneUnavailable:
+                "Choose a microphone"
+            case .transcriptionFailed, .transcriptionTimedOut, .cloudTranscriptionFailed:
+                "Review model settings"
             case .secureInputBlocked, .insertionFailed:
                 nil
             }

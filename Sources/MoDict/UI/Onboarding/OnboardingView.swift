@@ -49,6 +49,8 @@ struct OnboardingView: View {
         .onChange(of: step) { _, newStep in handleStepChange(to: newStep) }
         .onChange(of: controller.modelState) { _, _ in handleReadinessChange() }
         .onChange(of: controller.lastInsertedText) { _, newValue in handleInsertion(newValue) }
+        .onKeyPress(.leftArrow) { goBack(); return .handled }
+        .onKeyPress(.rightArrow) { advanceIfReady(); return .handled }
         .transaction { if reduceMotion { $0.animation = nil } }
     }
 
@@ -222,6 +224,17 @@ struct OnboardingView: View {
     private func advance() {
         guard step < Self.stepCount - 1 else { return }
         withAnimation(Theme.stateSpring) { step += 1 }
+    }
+
+    /// Arrow-key path: same gating as the primary button (condition check plus
+    /// the finish-on-last-step behavior).
+    private func advanceIfReady() {
+        if step == Self.stepCount - 1 {
+            finish()
+        } else {
+            guard conditionMet(for: step) else { return }
+            advance()
+        }
     }
 
     private func goBack() {

@@ -29,6 +29,11 @@ struct InterfaceStateTests {
         #expect(status(issue: .microphoneMissing).action == .settings(.dictation))
         #expect(status(issue: .cloudTranscriptionFailed("Offline")).action == .settings(.model))
         #expect(status(issue: .secureInputBlocked).action == nil)
+        // Action labels name the destination pane, not the gesture.
+        #expect(status(issue: .inputMonitoringPermissionMissing).actionTitle == "Open General settings")
+        #expect(status(issue: .microphoneMissing).actionTitle == "Choose a microphone")
+        #expect(status(issue: .cloudTranscriptionFailed("Offline")).actionTitle == "Review model settings")
+        #expect(status(issue: .secureInputBlocked).actionTitle == nil)
         #expect(status(enabled: false, phase: .recording).isRecording)
         #expect(status(phase: .transcribing).action == nil)
         #expect(status(.downloading(.init(phase: .downloading, fraction: 0.42))).fraction == 0.42)

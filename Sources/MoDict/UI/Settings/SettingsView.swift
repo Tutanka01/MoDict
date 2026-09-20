@@ -239,7 +239,7 @@ private struct KeycapPressStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .scaleEffect(configuration.isPressed && !reduceMotion ? Theme.keycapPressedScale : 1)
-            .animation(Theme.keycapPressSpring, value: configuration.isPressed)
+            .animation(reduceMotion ? nil : Theme.keycapPressSpring, value: configuration.isPressed)
     }
 }
 
