@@ -56,6 +56,9 @@ final class HUDController {
         position()
 
         if case .error = state { model.shakeToken &+= 1 }
+        model.sessionStartDate = (state == .recording) ? Date() : model.sessionStartDate
+        if case .success = state { model.insertedWordCount = nil }
+        postAccessibilityAnnouncement(for: state)
 
         if isVisible {
             // Already on screen: animate the width/content change in place.
@@ -101,6 +104,22 @@ final class HUDController {
         let alpha = clamped > smoothedLevel ? Theme.levelAttack : Theme.levelRelease
         smoothedLevel += alpha * (clamped - smoothedLevel)
         model.level = CGFloat(smoothedLevel)
+        // Publish only perceptual steps: the aura re-renders on change, the
+        // waveform keeps reading the raw level on the display clock.
+        let step = Int((smoothedLevel * 6).rounded())
+        if step != model.auraLevel {
+            model.auraLevel = step
+        }
+        onLevelSample?(smoothedLevel)
+    }
+
+    /// Silence-watchdog hook: every smoothed level sample lands here while the
+    /// controller is visible.
+    var onLevelSample: ((Float) -> Void)?
+
+    /// Quietly answers "did the long dictation survive?" on success.
+    func setInsertedWordCount(_ count: Int) {
+        model.insertedWordCount = count
     }
 
     func hide() {
@@ -108,6 +127,7 @@ final class HUDController {
         isVisible = false
         smoothedLevel = 0
         model.level = 0
+        model.sessionStartDate = nil
 
         withAnimation(.easeOut(duration: Theme.disappearDuration)) {
             model.contentScale = 0.96
@@ -126,6 +146,26 @@ final class HUDController {
     }
 
     // MARK: Panel
+
+    /// The HUD is a transparent, non-focusable overlay — invisible to the
+    /// accessibility tree. Terminal outcomes are announced instead so VoiceOver
+    /// users hear the same feedback sighted users see.
+    private func postAccessibilityAnnouncement(for state: HUDState) {
+        let message: String?
+        switch state {
+        case .success: message = "MoDict pasted your dictation."
+        case .error(let messageText, _): message = "MoDict: \(messageText)"
+        case .recording, .transcribing: message = nil   // announced state changes only
+        }
+        guard let message else { return }
+        NSAccessibility.post(
+            element: NSApp as Any,
+            notification: .announcementRequested,
+            userInfo: [
+                .announcement: message
+            ]
+        )
+    }
 
     private func ensurePanel() {
         guard panel == nil else { return }

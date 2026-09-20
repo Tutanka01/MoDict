@@ -240,6 +240,12 @@ final class DictationController: ObservableObject {
                 self?.hud.setLevel(level)
             }
         }
+        // Silence watchdog: a level hugging zero for seconds while recording is
+        // almost always the wrong input device. Say so before the user finishes
+        // a long dictation that transcribes to nothing.
+        hud.onLevelSample = { [weak self] level in
+            self?.observeRecordingLevel(level)
+        }
         microphone.onChunk = { [box = streamingSessionBox] chunk in
             // Audio thread. `feed` is synchronous and non-blocking; a single
             // producer keeps the chunks ordered end-to-end.
@@ -454,6 +460,7 @@ final class DictationController: ObservableObject {
         hideTask?.cancel()
         hud.setActionHint(recordingActionHint)
         hud.show(.recording)
+        silenceWatchdogStart()
         partialTranscript = nil
         partialSettled = false
         hud.setPartial(nil)
@@ -613,6 +620,7 @@ final class DictationController: ObservableObject {
             lastInsertedText = text
             history.add(text, costUSD: cost)
             sounds.dictationSucceeded()
+            hud.setInsertedWordCount(text.split(whereSeparator: \.isWhitespace).count)
             transientHUD(.success, dwell: Theme.successDwell)
         case .secureInputBlocked:
             history.add(text, costUSD: cost)   // don't lose the words — they're in history
@@ -715,6 +723,42 @@ final class DictationController: ObservableObject {
             return "Release to paste · tap for hands-free"
         }
     }
+
+    // MARK: Silence watchdog
+
+    /// Warns once, after sustained silence, that nothing is being heard — long
+    /// before the transcription comes back empty. Recovers on the first real
+    /// signal without resetting the session.
+    private func observeRecordingLevel(_ level: Float) {
+        guard phase == .recording else { return }
+        if level >= Self.silenceLevelFloor {
+            silenceSamples = 0
+            if silenceWarned {
+                silenceWarned = false
+                hud.setActionHint(recordingActionHint)
+            }
+            return
+        }
+        silenceSamples += 1
+        let elapsed = ProcessInfo.processInfo.systemUptime - recordingStartedAt
+        if !silenceWarned, silenceSamples >= Self.silenceSampleLimit, elapsed >= Self.silenceGraceSeconds {
+            silenceWarned = true
+            hud.setActionHint("Hearing nothing — check your microphone")
+        }
+    }
+
+    private func silenceWatchdogStart() {
+        silenceSamples = 0
+        silenceWarned = false
+    }
+
+    private static let silenceLevelFloor: Float = 0.02
+    /// ~2.5 s at 30 fps of smoothed near-zero samples, after a 1.5 s grace so a
+    /// slow speaker opening is never flagged.
+    private static let silenceSampleLimit = 75
+    private static let silenceGraceSeconds: TimeInterval = 1.5
+    private var silenceSamples = 0
+    private var silenceWarned = false
 
     private func handleHandsFree() {
         guard phase == .recording else { return }

@@ -65,9 +65,9 @@ application while recording.
 **States & content**
 | State | Content | Notes |
 |---|---|---|
-| `recording` | red pulse + 7 waveform bars, “Listening”, and the exact stop gesture | “Release to paste” for Hold; hands-free changes to “Press again to paste” |
+| `recording` | red pulse + 7 waveform bars, the stop gesture, the elapsed clock, and the esc chip | hint is the exact stop gesture (“Release to paste”; hands-free: “Press again to paste”); sustained silence swaps it for an orange “Hearing nothing — check your microphone” |
 | `transcribing` | 3 dots, “Preparing paste”, the esc chip, and the last preview | the target application is still untouched |
-| `success` | `checkmark.circle.fill` + “Pasted” | shown ~700 ms then hidden |
+| `success` | `checkmark.circle.fill` + “Pasted · N words” | shown ~700 ms then hidden; the word count answers the long-dictation doubt |
 | `error(message)` | contextual red symbol + primary label | up to two lines; shown ~2.2 s |
 
 **Private preview and commit boundary**
@@ -177,9 +177,19 @@ Menu actions navigate directly to the relevant pane; the last pane is remembered
 
 No new dependencies or settings affecting transcription. The app follows the system
 appearance. Reduce Motion suppresses setup transitions, HUD scaling/shake, animated
-transcribing dots and keycap compression. The recording waveform retains a slower,
-non-oscillating level update. The HUD shows an Esc cancellation hint and preserves its
-existing non-activating panel, stable preview width and screen-edge anchoring.
+transcribing dots and keycap compression, and the voice aura. The recording waveform
+retains a slower, non-oscillating level update. The HUD shows an Esc cancellation hint
+and preserves its existing non-activating panel, stable preview width and screen-edge
+anchoring.
+
+### Voice aura (2026 polish)
+
+A soft monochrome halo behind the recording card, swelling with the smoothed mic
+level. The level is published only as a quantized 0–6 step, so the aura re-renders on
+perceptual changes — never per frame — and settles to still in silence. It is hidden
+with Reduce Motion and only present while recording. A one-second monospaced elapsed
+clock (m:ss) sits next to the stop gesture; the glass material (`NSGlassEffectView`)
+remains a documented future step pending visual QA (see Docs/QA.md).
 
 ## Sound & haptics
 

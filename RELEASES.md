@@ -13,6 +13,42 @@ and publishes `MoDict-X.Y.Z.dmg` on the
 - Highlight 2
 -->
 
+## v0.7.0 — 2026-09-20
+
+The interface refresh release: the menu bar, Settings, onboarding and the HUD
+were rebuilt around one idea — a quiet tool that answers you.
+
+- **A menu bar that acts, not just reports**: the status card now names the
+  exact problem and the fix (Download model, Retry setup, Resume dictation,
+  Open General settings, Choose a microphone, Review model settings), the
+  model row and today's cloud spend open the right Settings pane directly,
+  and the recent list is scrollable with a full-text popover and a
+  confirmation dialog before clearing. A footer holds Settings (⌘,), Pause
+  Dictation (⌘P) and Quit.
+- **Settings gets a sidebar**: seven panes — General, Dictation, Vocabulary,
+  Appearance, Model, Usage, About — with a per-pane subtitle, large usage
+  metrics, and a dedicated Appearance pane (HUD position with visual cards,
+  sounds, haptics). Deep links from the menu bar land on the right pane.
+- **Setup is a real onboarding**: labeled step progress, one shared
+  ShortcutGuide that states the actual gesture for your key and activation
+  mode, arrow-key navigation, and a pre-focused trial editor.
+- **The HUD answers you**: a soft monochrome voice aura swells with your
+  speech, a m:ss clock counts the recording, Pasted reports the word count
+  ("Pasted · 24 words"), and a silence watchdog warns "Hearing nothing —
+  check your microphone" before a long dictation transcribes to nothing —
+  then recovers on the first syllable. Success and error states are
+  announced to VoiceOver.
+- **Settings windows behave like normal windows again**: resizable (a
+  SwiftUI `Settings`-scene limitation, worked around), and MoDict appears in
+  the Dock and ⌘-tab while a window is open, returning to a pure menu-bar
+  citizen on close.
+- Reduce Motion is respected everywhere: no aura, no shake, no transitions,
+  and the waveform timeline pauses instead of repainting a still frame.
+
+Requires macOS 15+ on Apple Silicon. Local builds keep the `MoDict Dev`
+signing identity and the `com.modict.app` bundle ID, so TCC permissions,
+models and history survive the update.
+
 ## v0.6.0 — 2026-09-19
 
 - **Cloud usage and cost tracking**: every OpenRouter response reports the exact

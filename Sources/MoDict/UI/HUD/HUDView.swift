@@ -10,22 +10,30 @@ enum HUDPlacement {
     case bottom
 }
 
-/// Observable state backing the near-pointer composition preview.
-///
-/// `level` is deliberately not published: the display-clock waveform reads it
-/// directly, avoiding a full card re-render for every microphone buffer.
-@MainActor
-final class HUDModel: ObservableObject {
-    @Published var state: HUDState = .recording
-    @Published var partial: PartialTranscript?
-    @Published var actionHint = "Release to paste"
-    @Published var placement: HUDPlacement = .center
-    @Published var contentScale: CGFloat = 0.94
-    @Published var contentOpacity: Double = 0
-    @Published var shakeToken: Int = 0
+    /// Observable state backing the near-pointer composition preview.
+    ///
+    /// `level` is deliberately not published: the display-clock waveform reads it
+    /// directly, avoiding a full card re-render for every microphone buffer.
+    @MainActor
+    final class HUDModel: ObservableObject {
+        @Published var state: HUDState = .recording
+        @Published var partial: PartialTranscript?
+        @Published var actionHint = "Release to paste"
+        @Published var placement: HUDPlacement = .center
+        @Published var contentScale: CGFloat = 0.94
+        @Published var contentOpacity: Double = 0
+        @Published var shakeToken: Int = 0
+        /// Words inserted on success — the "did the long dictation survive?" quiet answer.
+        @Published var insertedWordCount: Int?
+        /// Quantized mic level (0–6) driving the voice aura. Publishing only the
+        /// quantized step re-renders the aura on perceptual changes, not frames.
+        @Published var auraLevel = 0
+        /// When this recording session began; nil outside `.recording`. Drives the
+        /// elapsed read without a wall-clock boundary error.
+        @Published var sessionStartDate: Date?
 
-    var level: CGFloat = 0
-}
+        var level: CGFloat = 0
+    }
 
 struct HUDRootView: View {
     @ObservedObject var model: HUDModel
@@ -85,6 +93,20 @@ private struct HUDCompositionCard: View {
             .frame(width: cardWidth, alignment: .leading)
             .background(.regularMaterial, in: cardShape)
             .overlay(cardShape.strokeBorder(Theme.hairline(for: scheme), lineWidth: 0.75))
+            .background {
+                // The voice aura: a soft monochrome halo that swells with the
+                // published quantized level — perceptual steps only, so it also
+                // settles to still when the room goes quiet.
+                GeometryReader { proxy in
+                    Circle()
+                        .fill(Color.primary.opacity(0.10))
+                        .frame(width: auraDiameter, height: auraDiameter)
+                        .blur(radius: 34)
+                        .position(x: proxy.size.width / 2, y: proxy.size.height / 2)
+                        .opacity(model.state == .recording && !reduceMotion ? 1 : 0)
+                        .animation(reduceMotion ? nil : .easeInOut(duration: 0.24), value: model.auraLevel)
+                }
+            }
             .shadow(
                 color: Theme.hudShadow,
                 radius: Theme.hudShadowRadius,
@@ -104,6 +126,11 @@ private struct HUDCompositionCard: View {
             }
             .animation(reduceMotion ? nil : Theme.stateSpring, value: model.state)
             .animation(reduceMotion ? nil : Theme.textSpring, value: hasPreview)
+    }
+
+    /// Aura diameter follows the published quantized level.
+    private var auraDiameter: CGFloat {
+        cardWidth * 0.8 + CGFloat(model.auraLevel) * 14
     }
 
     private var cardShape: RoundedRectangle {
@@ -145,8 +172,22 @@ private struct HUDCompositionCard: View {
 
                 Text(model.actionHint)
                     .font(Theme.hudHintFont)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(isWatchdogWarning ? Color.orange : Color.secondary)
                     .lineLimit(1)
+                    .fixedSize()
+                Text("0:00")
+                    .font(Theme.hudHintFont.monospacedDigit())
+                    .foregroundStyle(.clear)
+                    .accessibilityHidden(true)
+                    .fixedSize()
+                    .overlay(alignment: .leading) {
+                        TimelineView(.animation(minimumInterval: 1.0 / 4, paused: reduceMotion)) { context in
+                            Text(recordingElapsed(from: context.date))
+                                .font(Theme.hudHintFont.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                                .fixedSize()
+                        }
+                    }
                 escapeChip
             }
 
@@ -157,6 +198,23 @@ private struct HUDCompositionCard: View {
         }
         .padding(.horizontal, Theme.hudHorizontalPadding)
         .padding(.vertical, Theme.hudVerticalPadding)
+    }
+
+    /// Seconds since the recording began; the clock resets with each session.
+    /// Minutes wrap at ten — a dictation that long deserves the batch anyway.
+    private func recordingElapsed(from date: Date) -> String {
+        let elapsed = max(0, Int(date.timeIntervalSince(model.sessionStartDate ?? date)))
+        return String(format: "%d:%02d", elapsed / 60, elapsed % 60)
+    }
+
+    /// The watchdog warning reads in orange; every normal hint stays calm.
+    private var isWatchdogWarning: Bool {
+        model.actionHint.contains("Hearing nothing")
+    }
+
+    /// The calm, expected hint — used to color the watchdog warning distinctly.
+    private var recordingActionHint: String {
+        model.actionHint
     }
 
     private var transcribingContent: some View {
@@ -188,6 +246,11 @@ private struct HUDCompositionCard: View {
                 .font(.system(size: 15, weight: .semibold))
             Text("Pasted")
                 .font(Theme.hudTitleFont)
+            if let words = model.insertedWordCount, words > 0 {
+                Text("· \(words) words")
+                    .font(Theme.hudHintFont)
+                    .foregroundStyle(.secondary)
+            }
         }
         .foregroundStyle(Color.primary)
         .padding(.horizontal, Theme.hudHorizontalPadding)

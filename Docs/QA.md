@@ -453,5 +453,8 @@ Notes:
 - [ ] Recent: five long dictations scroll without hiding the footer; a single short dictation leaves no dead space under the list; Copy confirms; ellipsis reveals selectable full text.
 - [ ] Clear history: cancelling preserves entries; confirming clears only the in-memory history.
 - [ ] Setup: named steps advance correctly; left/right arrows navigate steps; the trial editor receives focus and arrow keys edit text inside the editor.
-- [ ] Reduce Motion: no setup scale transition, HUD shake or keycap compression; the input level still updates.
-- [ ] HUD: the Esc hint fits with both Release to paste and Press again to paste, with and without preview.
+- [ ] Reduce Motion: no setup scale transition, HUD shake, keycap compression or voice aura; the input level still updates.
+- [ ] HUD: the Esc hint fits with both Release to paste and Press again to paste, with and without preview; the elapsed clock starts at 0:00 with the session.
+- [ ] HUD: the stop-gesture hint returns to secondary color when speech resumes after a silence warning; the word count shows on Pasted for a 3+ word dictation.
+- [ ] VoiceOver: success and error HUD states are announced when the screen reader is running.
+- [ ] Future: adopt NSGlassEffectView (Liquid Glass) for the HUD card on macOS 26+ only after checking light/dark rendering with real dictation; current build ships `.regularMaterial`.

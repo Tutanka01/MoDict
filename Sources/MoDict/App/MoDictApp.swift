@@ -79,10 +79,12 @@ struct MoDictApp: App {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var onboarding: OnboardingController?
+    /// SwiftUI's `Settings` scene window identifier.
+    private static let settingsWindowID = "com_apple_SwiftUI_Settings_window"
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
-
+        adoptSettingsWindowBehavior()
         Task { @MainActor in
             let app = AppModel.shared
             if OnboardingController.isNeeded(settings: app.settings) {
@@ -94,6 +96,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             await app.usage.refresh()
         }
+    }
+
+    /// The `Settings` scene window is fixed-size (SwiftUI limitation) and, in an
+    /// accessory app, unreachable from the app switcher. While it is open the app
+    /// behaves like a normal app — resizable window, Dock icon, ⌘-tab focus — and
+    /// returns to a pure menu-bar citizen when it closes.
+    private func adoptSettingsWindowBehavior() {
+        let observer = NotificationCenter.default
+        observer.addObserver(
+            forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main
+        ) { [weak self] note in
+            self?.promoteWhileSettingsVisible(note.object as? NSWindow)
+        }
+        observer.addObserver(
+            forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            // Fallback: an already-open settings window that regains focus
+            // without becoming key again (e.g. clicking its title bar only).
+            let window = NSApp.windows.first {
+                $0.identifier?.rawValue == Self.settingsWindowID && $0.isVisible
+            }
+            self?.promoteWhileSettingsVisible(window)
+        }
+        observer.addObserver(
+            forName: NSWindow.willCloseNotification, object: nil, queue: .main
+        ) { [weak self] note in
+            guard let window = note.object as? NSWindow,
+                  window.identifier?.rawValue == Self.settingsWindowID else { return }
+            self?.returnToMenuBar()
+        }
+    }
+
+    private func promoteWhileSettingsVisible(_ window: NSWindow?) {
+        guard let window, window.identifier?.rawValue == Self.settingsWindowID else { return }
+        window.styleMask.insert(.resizable)
+        window.minSize = NSSize(width: 780, height: 620)
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func returnToMenuBar() {
+        NSApp.setActivationPolicy(.accessory)
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
