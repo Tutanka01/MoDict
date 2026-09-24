@@ -1,8 +1,9 @@
+import AppKit
 import SwiftUI
 
 /// Design tokens for MoDict. Single source of truth — see Docs/DESIGN.md.
-/// Monochrome: materials, `Color.primary`/`.secondary`, and system red for the
-/// recording dot and errors only.
+/// Monochrome: materials, `Color.primary`/`.secondary`, system red for errors
+/// (and the menu's recording dot), system orange for the silence warning only.
 enum Theme {
 
     // MARK: HUD geometry
@@ -14,26 +15,55 @@ enum Theme {
     /// Inset between the card's pinned edge and the panel edge — sized so the
     /// drop shadow (radius 24, y 10) never clips against the panel bounds.
     static let hudCardEdgeMargin: CGFloat = 36
-    /// One width for the whole recording → transcribing session: changing it
-    /// mid-dictation would rewrap the caption, which reads as jitter.
+    /// Card width once preview words exist, fixed for the rest of the
+    /// session: changing it mid-dictation would rewrap the caption.
     static let hudSessionWidth: CGFloat = 380
-    static let hudSuccessWidth: CGFloat = 118
     static let hudErrorWidth: CGFloat = 280
-    static let hudCornerRadius: CGFloat = 16
+    /// Half the capsule height, so the capsule and the card are one shape.
+    static let hudCornerRadius: CGFloat = 20
+    /// One leading inset for the capsule and the card, so the waveform
+    /// never shifts during the morph and the words start exactly at the text
+    /// cursor.
     static let hudHorizontalPadding: CGFloat = 15
-    static let hudVerticalPadding: CGFloat = 13
-    /// Three lines at the preview font's natural line height + line spacing.
-    static let hudPreviewHeight: CGFloat = 58
-    /// Distance from the pointer to the center of a near-pointer card.
+    /// Trailing inset when the esc chip ends the row: its corners then sit
+    /// concentric with the capsule's.
+    static let hudChipTrailingPadding: CGFloat = 11
+    static let hudVerticalPadding: CGFloat = 12
+    /// Between the voice row and the words.
+    static let hudRowSpacing: CGFloat = 8
+    /// Capsule states (voice bars, Pasted): 22 pt bars + 2 × 9 = 40 pt tall.
+    static let hudCompactVerticalPadding: CGFloat = 9
+    /// Gap between the text cursor's line and the card hanging below (or above) it.
+    static let hudCaretGap: CGFloat = 8
+    /// A dictation must run this long before the elapsed clock appears.
+    static let hudClockDelay: TimeInterval = 10
+    static let hudPreviewLineSpacing: CGFloat = 3
+    /// The preview font's natural line height (ascender + descender + leading).
+    static let hudPreviewLineHeight: CGFloat = {
+        let font = NSFont.systemFont(ofSize: hudPreviewFontSize)
+        return ceil(font.ascender - font.descender + font.leading)
+    }()
+    /// The caption grows one line at a time up to three lines, then glides.
+    static let hudPreviewHeight: CGFloat = hudPreviewLineHeight * 3 + hudPreviewLineSpacing * 2
+    /// Distance from the pointer to the center of a near-pointer card (the
+    /// fallback when the focused app reports no text cursor).
     static let hudPointerCenterOffset: CGFloat = 78
 
-    // MARK: Waveform
+    // MARK: Waveform and cursor (the living mark)
 
     static let waveformBarCount = 7
     static let waveformBarWidth: CGFloat = 3
     static let waveformBarGap: CGFloat = 3
     static let waveformBarMinHeight: CGFloat = 4
     static let waveformBarMaxHeight: CGFloat = 22
+    /// Height of the voice row (and of the capsule's content).
+    static let hudRowHeight: CGFloat = 22
+    static let caretWidth: CGFloat = 2
+    static let caretHeight: CGFloat = 22
+    /// Between the waveform and the cursor beside it.
+    static let caretGap: CGFloat = 6
+    /// A native caret's rhythm: about half a second on, half a second off.
+    static let caretBlinkPeriod: TimeInterval = 1.06
     /// EMA smoothing factors for the mic level.
     static let levelAttack: Float = 0.55
     static let levelRelease: Float = 0.18
@@ -42,11 +72,16 @@ enum Theme {
 
     static let appearSpring = Animation.spring(response: 0.32, dampingFraction: 0.75)
     static let stateSpring = Animation.spring(response: 0.32, dampingFraction: 0.75)
-    static let barSpring = Animation.interpolatingSpring(stiffness: 170, damping: 15)
     /// One-time compact → preview height growth: fully damped so the caption
-    /// baseline never overshoots. Per-partial text updates are NOT animated —
-    /// interpolating a live caption is what makes it swim.
+    /// baseline never overshoots. Per-partial text layout is NOT animated —
+    /// interpolating a live caption is what makes it swim; new words animate
+    /// in the renderer instead (drawing only).
     static let textSpring = Animation.spring(response: 0.4, dampingFraction: 0.9)
+    /// Line growth and the glide as a new line wraps: critically damped, so a
+    /// partial arriving mid-glide just retargets it.
+    static let captionSpring = Animation.spring(response: 0.36, dampingFraction: 1)
+    /// The success check drawing itself.
+    static let checkSpring = Animation.spring(response: 0.42, dampingFraction: 0.82)
     static let disappearDuration: TimeInterval = 0.18
     /// How long transient HUD states stay on screen before auto-hiding.
     static let successDwell: TimeInterval = 0.7
@@ -54,14 +89,21 @@ enum Theme {
 
     // MARK: Color & materials
 
+    /// The menu's recording indicator. The HUD needs none: its bars move with your voice.
     static let recordingDot = Color.red.opacity(0.9)
-    static let hudShadow = Color.black.opacity(0.18)
-    static let hudShadowRadius: CGFloat = 24
-    static let hudShadowY: CGFloat = 10
-
-    static func hairline(for scheme: ColorScheme) -> Color {
-        scheme == .dark ? Color.white.opacity(0.08) : Color.black.opacity(0.06)
-    }
+    /// Smoked glass (macOS 26+): the `.clear` Liquid Glass variant tinted deep
+    /// enough that white text reads over any content. `.regular` stays a flat
+    /// mid gray over light pages whatever its tint.
+    static let hudGlassTint = Color.black.opacity(0.7)
+    /// The same smoke over AppKit's `hudWindow` material (macOS 15).
+    static let hudSmoke = Color.black.opacity(0.5)
+    /// Lit top edge of the macOS 15 surface; Liquid Glass carries its own.
+    static let hudRim = LinearGradient(colors: [.white.opacity(0.26), .white.opacity(0.07)],
+                                       startPoint: .top, endPoint: .bottom)
+    static let hudContactShadow = Color.black.opacity(0.2)
+    static let hudShadow = Color.black.opacity(0.26)
+    static let hudShadowRadius: CGFloat = 22
+    static let hudShadowY: CGFloat = 12
 
     // MARK: Keycap picker (Settings → General)
 
@@ -80,25 +122,13 @@ enum Theme {
 
     static let hudTitleFont = Font.system(size: 12.5, weight: .semibold)
     static let hudHintFont = Font.system(size: 10.5, weight: .medium)
-    static let hudPreviewFont = Font.system(size: 13, weight: .regular)
+    static let hudPreviewFontSize: CGFloat = 14
+    static let hudPreviewFont = Font.system(size: hudPreviewFontSize, weight: .regular)
     static let onboardingTitleFont = Font.system(size: 26, weight: .semibold)
     static let onboardingBodyFont = Font.system(size: 13)
 }
 
-/// The same mark and gesture guide across setup, settings, and the menu.
-struct AppGlyph: View {
-    var size: CGFloat = 40
-
-    var body: some View {
-        Image(systemName: "waveform")
-            .font(.system(size: size * 0.46, weight: .medium))
-            .foregroundStyle(.background)
-            .frame(width: size, height: size)
-            .background(.primary, in: RoundedRectangle(cornerRadius: size * 0.26))
-            .accessibilityHidden(true)
-    }
-}
-
+/// The same gesture guide across setup, settings, and the menu.
 enum DictationGesture {
     static func instruction(key: DictationKey, mode: HotkeyMonitor.Mode) -> String {
         switch mode {

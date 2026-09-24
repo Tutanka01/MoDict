@@ -127,6 +127,45 @@ struct SettingsStoreTests {
         }
     }
 
+    /// HUD guidance fades after the gesture is learned and returns when the
+    /// gesture changes; upgraded installations start without it.
+    @Test
+    func gestureHintsFadeWithUseAndReturnWhenTheShortcutChanges() {
+        withEmptyDefaults { defaults in
+            let store = SettingsStore(defaults: defaults)
+            #expect(store.gestureHintsRemaining == SettingsStore.guidedDictations)
+
+            for _ in 0..<(SettingsStore.guidedDictations + 3) {
+                store.recordGuidedDictation()
+            }
+            #expect(store.gestureHintsRemaining == 0)
+            #expect(SettingsStore(defaults: defaults).gestureHintsRemaining == 0)
+
+            store.hotkeyMode = .pushToTalk   // unchanged: stays learned
+            #expect(store.gestureHintsRemaining == 0)
+            store.hotkeyMode = .toggle
+            #expect(store.gestureHintsRemaining == SettingsStore.guidedDictations)
+
+            for _ in 0..<SettingsStore.guidedDictations { store.recordGuidedDictation() }
+            store.dictationKey = .globe
+            #expect(store.gestureHintsRemaining == SettingsStore.guidedDictations)
+        }
+        withEmptyDefaults { defaults in
+            defaults.set(true, forKey: "onboardingCompleted")
+            #expect(SettingsStore(defaults: defaults).gestureHintsRemaining == 0)
+        }
+    }
+
+    @Test
+    func livePreviewIsOnByDefaultAndPersists() {
+        withEmptyDefaults { defaults in
+            let store = SettingsStore(defaults: defaults)
+            #expect(store.livePreview)
+            store.livePreview = false
+            #expect(!SettingsStore(defaults: defaults).livePreview)
+        }
+    }
+
     private func withEmptyDefaults(_ body: (UserDefaults) -> Void) {
         let suiteName = "MoDictTests.SettingsStore.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!

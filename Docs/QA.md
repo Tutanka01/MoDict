@@ -285,7 +285,7 @@ eviter le cooldown.
 
 ### Hold
 
-- [ ] Maintenir droite `Cmd`: HUD visible au key-down, waveform active.
+- [ ] Maintenir droite `Cmd`: HUD visible au key-down, bande vocale active (le curseur reste fixe pendant la parole).
 - [ ] Relacher: transcription puis insertion.
 - [ ] Tap bref: rien n'est insere.
 - [ ] Gauche `Cmd`: ne demarre jamais MoDict.
@@ -448,13 +448,34 @@ Notes:
 - [ ] Light and dark: sidebar selection, keycap labels and model privacy status remain legible.
 - [ ] Settings: all seven panes remain reachable by keyboard; grouped content scrolls at the minimum window size.
 - [ ] Hold / Toggle / Hybrid with each key: the menu and setup guide show the matching gesture.
-- [ ] Menu: the status card offers Resume when paused; Pause Dictation (⌘P) updates the controller; model and cost rows open the correct Settings pane.
+- [ ] Menu: when ready, no status card, only the gesture under the name; the card appears when paused (with Resume), downloading, recording, or on an issue. Pause (⌘P) updates the controller; model and cost rows open the correct Settings pane.
+- [ ] Menu bar item: the mark at rest, the knocked-out tile while dictating, dimmed when paused, the download arrow while a model downloads; legible in light and dark menu bars.
 - [ ] Missing model, key or permission: the status action downloads, retries, resumes or opens the relevant pane, and its label names the destination.
 - [ ] Recent: five long dictations scroll without hiding the footer; a single short dictation leaves no dead space under the list; Copy confirms; ellipsis reveals selectable full text.
 - [ ] Clear history: cancelling preserves entries; confirming clears only the in-memory history.
 - [ ] Setup: named steps advance correctly; left/right arrows navigate steps; the trial editor receives focus and arrow keys edit text inside the editor.
-- [ ] Reduce Motion: no setup scale transition, HUD shake, keycap compression or voice aura; the input level still updates.
-- [ ] HUD: the Esc hint fits with both Release to paste and Press again to paste, with and without preview; the elapsed clock starts at 0:00 with the session.
-- [ ] HUD: the stop-gesture hint returns to secondary color when speech resumes after a silence warning; the word count shows on Pasted for a 3+ word dictation.
+- [ ] Reduce Motion: no setup scale transition, HUD shake, keycap compression, waveform wobble or ripple, caret blink, ink entrance or shimmer; the input level still updates as a static meter.
+- [ ] Settings sidebar: native selection and keyboard navigation (arrow keys, VoiceOver), no sidebar toggle, no duplicated toolbar title; light and dark.
+- [ ] App icon: Finder and the Settings/About glyph show the voice-and-cursor mark; on macOS 26+ the Dock/Finder icon follows light, dark, tinted and clear icon styles (`Assets.car` present in `Contents/Resources`).
+
+### HUD at the text cursor
+
+- [ ] TextEdit, Notes, Mail, Safari text field, Xcode: the capsule appears just below the insertion point, the waveform starting at the cursor's x; typing or moving the mouse during the session never moves it.
+- [ ] Cursor on the last visible line near the bottom of the screen: the card flips above the line; near the right edge it stays on screen.
+- [ ] Terminal, and an Electron app that reports no caret: the capsule falls back to the pointer (centered above it), with no delay at key-down.
+- [ ] Top-center and Bottom positions ignore the cursor and keep their edge pinning.
+- [ ] Qwen (no live preview): the capsule stays a capsule for the whole recording; after release its waveform ripples toward the cursor, then the check draws on beside "Pasted  N words" and the capsule retracts toward the cursor.
+- [ ] Parakeet (live preview): the first words grow the capsule into the 380 pt card once, the cursor moves into the text; the card grows one line at a time with no empty line; the caption never rewraps or jitters afterwards; after release the words stay readable under the sweep until the paste.
+- [ ] Ink: new words condense out of a blur with the cursor riding just behind them (it never leaps ahead of invisible words); a revised word rewrites itself; tentative words brighten when confirmed; past three lines the older lines glide up through the top fade.
+- [ ] Cursor: solid while speaking or while words arrive, blinking at a native caret's rhythm after a pause, breathing while transcribing.
+- [ ] State changes (release → Pasted, recording → error): one glass surface morphs; the old content never overlaps the new one, and hints change without two labels overlapping.
+- [ ] Fresh install: the first 8 successful dictations show the stop gesture and esc; afterwards only the waveform and cursor. Changing the key or activation mode brings the hints back. An upgraded install starts without them.
+- [ ] Hybrid: tapping to switch to hands-free shows "Press again to paste" even after the hints have faded.
+- [ ] The m:ss clock appears only after 10 s of recording; the silence warning (orange) appears after sustained silence and clears on the first syllable, and the capsule height never changes.
+- [ ] The word count shows on Pasted for a 3+ word dictation.
+- [ ] Waveform: on a 120 Hz display the 7 bars glide with the voice (no stepping at ~12 Hz), wobble slightly while speaking and breathe slowly in silence; the capsule's appearance and disappearance are smooth.
+- [ ] Live preview with a cloud model and with Qwen (Parakeet on disk, Live preview on): words appear after ~2 s of speech; the capsule grows into the card once without any text drawn outside the glass; the pasted text is the selected model's, not the preview's. Turning Live preview off (Settings › Dictation) removes the preview; with Parakeet not downloaded there is no preview and nothing is downloaded.
+- [ ] Silence warning appears ~2.5 s into sustained silence (after a 1.5 s grace), not ~6 s.
 - [ ] VoiceOver: success and error HUD states are announced when the screen reader is running.
-- [ ] Future: adopt NSGlassEffectView (Liquid Glass) for the HUD card on macOS 26+ only after checking light/dark rendering with real dictation; current build ships `.regularMaterial`.
+- [ ] HUD surface: dictating over a white page in light mode, a black terminal in dark mode, a vivid wallpaper, and a full-screen dark app keeps the card equally legible as smoked glass (never a flat mid gray).
+- [ ] HUD surface by OS: macOS 26+ renders tinted `.clear` Liquid Glass over a light page and a dark terminal; macOS 15 renders the smoked `hudWindow` material with its lit rim; Reduce Transparency makes the surface opaque.

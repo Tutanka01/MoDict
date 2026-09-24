@@ -21,68 +21,55 @@ struct MenuBarView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 10) {
-                AppGlyph(size: 30)
-                Text("MoDict").font(.system(size: 15, weight: .semibold))
-                Spacer()
+            header
+
+            // At rest the popover is about your words; the status card only
+            // appears when there is something to know or do.
+            if !status.isReady {
+                MenuBar.StatusRow(status: status, onAction: performStatusAction)
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 4)
             }
-            .padding(16)
 
-            MenuBar.StatusRow(status: status, onAction: performStatusAction)
-                .padding(.horizontal, 12)
-
-            Button { showSettings(.model) } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: settings.speechModel.isCloud ? "cloud" : "lock.shield")
-                    Text(settings.speechModel.isCloud ? "Cloud" : "On this Mac")
-                    Text("·")
-                    Text(settings.speechModel.displayName).lineLimit(1)
-                    Spacer(minLength: 0)
-                    Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold))
-                }
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help("Choose a speech model")
-
-            Divider().padding(.horizontal, 16)
             historySection
 
-            if usage.snapshot.hasSpend {
-                Divider().padding(.horizontal, 16)
-                Button { showSettings(.usage) } label: {
-                    HStack {
-                        Label("Today", systemImage: "chart.bar")
-                        Spacer()
-                        Text(UsageFormat.cost(usage.snapshot.todayUSD)).monospacedDigit()
-                        Text("USD").foregroundStyle(.tertiary)
-                        Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold))
-                    }
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .padding(16)
-                    .contentShape(Rectangle())
+            Divider().padding(.horizontal, 16)
+
+            VStack(spacing: 0) {
+                Button { showSettings(.model) } label: {
+                    MenuBar.LinkRow(
+                        symbol: settings.speechModel.isCloud ? "cloud" : "lock.shield",
+                        title: settings.speechModel.isCloud ? "Cloud" : "On this Mac",
+                        value: settings.speechModel.displayName
+                    )
                 }
                 .buttonStyle(.plain)
-                .help("View usage and all-time costs")
+                .help("Choose a speech model")
+
+                if usage.snapshot.hasSpend {
+                    Button { showSettings(.usage) } label: {
+                        MenuBar.LinkRow(
+                            symbol: "chart.bar",
+                            title: "Today",
+                            value: "\(UsageFormat.cost(usage.snapshot.todayUSD)) USD"
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .help("View usage and all-time costs")
+                }
             }
+            .padding(.vertical, 6)
 
             Divider().padding(.horizontal, 16)
 
-            HStack {
-                Button { showSettings(.general) } label: {
-                    Label("Settings", systemImage: "gearshape")
-                }
-                .keyboardShortcut(",", modifiers: .command)
+            HStack(spacing: 16) {
+                Button("Settings…") { showSettings(.general) }
+                    .keyboardShortcut(",", modifiers: .command)
                 Spacer()
-                Button("Pause Dictation") {
-                    controller.setDictationEnabled(false)
+                Button(settings.dictationEnabled ? "Pause" : "Resume") {
+                    controller.setDictationEnabled(!settings.dictationEnabled)
                 }
-                .disabled(!settings.dictationEnabled)
+                .accessibilityLabel(settings.dictationEnabled ? "Pause dictation" : "Resume dictation")
                 .keyboardShortcut("p", modifiers: .command)
                 Button("Quit") { NSApplication.shared.terminate(nil) }
                     .keyboardShortcut("q", modifiers: .command)
@@ -90,7 +77,8 @@ struct MenuBarView: View {
             .buttonStyle(.plain)
             .font(.system(size: 12))
             .foregroundStyle(.secondary)
-            .padding(16)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 13)
         }
         .frame(width: 360)
         .tint(.primary)
@@ -104,6 +92,27 @@ struct MenuBarView: View {
         }
     }
 
+    /// The mark and name; when everything is ready, the one thing worth
+    /// remembering: the gesture.
+    private var header: some View {
+        HStack(spacing: 11) {
+            AppGlyph(size: 30)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("MoDict").font(.system(size: 13, weight: .semibold))
+                if status.isReady, let gesture = status.detail {
+                    Text(gesture)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 14)
+        .padding(.bottom, 10)
+    }
+
     private var status: MenuBar.Status {
         MenuBar.Status.make(phase: controller.phase, modelState: controller.modelState,
                             model: settings.speechModel, userIssue: controller.userIssue,
@@ -112,10 +121,10 @@ struct MenuBarView: View {
     }
 
     private var historySection: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text("RECENT DICTATIONS")
-                    .font(.system(size: 10, weight: .semibold)).tracking(1)
+                Text("Recent")
+                    .font(.system(size: 12, weight: .semibold))
                 Spacer()
                 if !history.items.isEmpty {
                     Button("Clear") { confirmingClear = true }
@@ -125,40 +134,33 @@ struct MenuBarView: View {
             }
             .foregroundStyle(.secondary)
             .padding(.horizontal, 16)
-            .padding(.top, 16)
+            .padding(.top, 12)
             if history.items.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Your next thought starts here.")
-                        .font(.system(size: 14, weight: .medium))
-                    Text("Dictate in any app. Your last five dictations will be here, ready to copy again.")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .padding(16)
+                Text("Your last five dictations appear here, ready to copy again.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
             } else {
                 ScrollView {
-                    VStack(spacing: 6) {
+                    VStack(spacing: 4) {
                         ForEach(history.items) { item in
                             MenuBar.HistoryRow(item: item, copied: copiedID == item.id) { copy(item) }
                         }
                     }
                     .padding(.horizontal, 12)
-                    .padding(.bottom, 6)
+                    .padding(.bottom, 4)
                 }
-                // Size to the rows' natural height, capped at five-ish entries
-                // before the list scrolls. A fixed row estimate leaves dead space
-                // under short entries.
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxHeight: 310)
-                Label("This session only · Never saved to disk", systemImage: "lock")
+                .frame(height: MenuBar.historyViewportHeight(for: history.items.count))
+                Label("In memory until you quit", systemImage: "lock")
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 16)
-                    .padding(.vertical, 8)
+                    .padding(.bottom, 4)
             }
         }
-        .padding(.bottom, 6)
+        .padding(.bottom, 8)
     }
 
     private func showSettings(_ pane: SettingsPane) {
@@ -189,6 +191,10 @@ struct MenuBarView: View {
 }
 
 enum MenuBar {
+    static func historyViewportHeight(for itemCount: Int) -> CGFloat {
+        min(CGFloat(itemCount) * 80, 220)
+    }
+
     /// Everything the status line needs, derived from the controller's phase and
     /// model state (plus the master enable switch).
     struct Status {
@@ -197,6 +203,8 @@ enum MenuBar {
         var detail: String?
         var isRecording = false
         var isError = false
+        /// Plain readiness: nothing to report, nothing to do.
+        var isReady = false
         enum Action: Equatable {
             case retry, download, resume, settings(SettingsPane)
         }
@@ -243,7 +251,8 @@ enum MenuBar {
 
             switch modelState {
             case .ready:
-                return Status(text: readyText, symbol: model.isCloud ? "cloud" : "waveform", detail: readyDetail)
+                return Status(text: readyText, symbol: model.isCloud ? "cloud" : "waveform", detail: readyDetail,
+                              isReady: true)
             case .downloading(let progress):
                 switch progress.phase {
                 case .downloading:
@@ -256,7 +265,8 @@ enum MenuBar {
                 case .compiling:
                     return Status(text: "Preparing speech model…", symbol: "arrow.down.circle")
                 case .ready:
-                    return Status(text: readyText, symbol: model.isCloud ? "cloud" : "waveform", detail: readyDetail)
+                    return Status(text: readyText, symbol: model.isCloud ? "cloud" : "waveform", detail: readyDetail,
+                                  isReady: true)
                 }
             case .needsDownload:
                 return Status(text: "Speech model needs download",
@@ -323,12 +333,40 @@ enum MenuBar {
         }
     }
 
+    /// A quiet navigation row: symbol, label, value, chevron.
+    struct LinkRow: View {
+        let symbol: String
+        let title: String
+        let value: String
+
+        var body: some View {
+            HStack(spacing: 8) {
+                Image(systemName: symbol)
+                    .frame(width: 16)
+                Text(title)
+                Spacer(minLength: 8)
+                Text(value)
+                    .lineLimit(1)
+                    .monospacedDigit()
+                    .foregroundStyle(.tertiary)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .font(.system(size: 12))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 7)
+            .contentShape(Rectangle())
+        }
+    }
+
     struct StatusRow: View {
         let status: Status
         let onAction: () -> Void
 
         var body: some View {
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 9) {
                     if status.isRecording {
                         Circle().fill(Theme.recordingDot).frame(width: 7, height: 7)
@@ -337,12 +375,12 @@ enum MenuBar {
                             .foregroundStyle(status.isError ? Color.red : Color.secondary)
                     }
                     Text(status.text)
-                        .font(.system(size: 15, weight: .semibold))
+                        .font(.system(size: 14, weight: .semibold))
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if let detail = status.detail {
                     Text(detail)
-                        .font(.system(size: 12))
+                        .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                         .lineLimit(3)
                         .fixedSize(horizontal: false, vertical: true)
@@ -365,8 +403,8 @@ enum MenuBar {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(16)
-            .background(.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 14))
+            .padding(14)
+            .background(.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 12))
         }
     }
 
@@ -378,67 +416,63 @@ enum MenuBar {
         @State private var showingText = false
 
         var body: some View {
-            HStack(alignment: .center, spacing: 4) {
-                Button(action: onCopy) {
-                    VStack(alignment: .leading, spacing: 7) {
-                        Text(item.text)
-                            .font(.system(size: 13))
-                            .foregroundStyle(.primary)
-                            .lineLimit(2)
-                            .multilineTextAlignment(.leading)
-                        HStack(spacing: 6) {
-                            Text(item.date, style: .time)
-                            if let cost = item.costUSD, cost > 0 {
-                                Text("·")
-                                Text(UsageFormat.cost(cost)).monospacedDigit()
+            HStack(alignment: .top, spacing: 8) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(item.text)
+                        .font(.system(size: 13))
+                        .foregroundStyle(.primary)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                    HStack(spacing: 6) {
+                        Text(item.date, style: .time)
+                        if let cost = item.costUSD, cost > 0 {
+                            Text("·")
+                            Text(UsageFormat.cost(cost)).monospacedDigit()
+                        }
+                    }
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                VStack(alignment: .trailing, spacing: 0) {
+                    Button(action: onCopy) {
+                        Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
+                    }
+                    .accessibilityLabel(copied ? "Copied dictation" : "Copy dictation: \(item.text)")
+                    Button { showingText = true } label: {
+                        Image(systemName: "ellipsis")
+                            .frame(width: 44, height: 28)
+                            .contentShape(Rectangle())
+                    }
+                    .accessibilityLabel("Read full dictation")
+                    .help("Read full dictation")
+                    .popover(isPresented: $showingText) {
+                        VStack(alignment: .leading, spacing: 12) {
+                            HStack {
+                                Text("Dictation").font(.headline)
+                                Spacer()
+                                Button(copied ? "Copied" : "Copy", action: onCopy)
                             }
-                            Spacer()
-                            Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
+                            ScrollView {
+                                Text(item.text)
+                                    .font(.system(size: 14))
+                                    .lineSpacing(4)
+                                    .textSelection(.enabled)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .frame(maxHeight: 320)
                         }
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
+                        .padding(20)
+                        .frame(width: 380)
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(10)
-                    .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Copy dictation: \(item.text)")
-                .accessibilityValue(copied ? "Copied" : "")
-
-                Button { showingText = true } label: {
-                    Image(systemName: "ellipsis")
-                        .font(.system(size: 14))
-                        .frame(width: 28, height: 32)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
-                .accessibilityLabel("Read full dictation")
-                .help("Read full dictation")
-                .popover(isPresented: $showingText) {
-                    VStack(alignment: .leading, spacing: 12) {
-                        HStack {
-                            Text("Dictation").font(.headline)
-                            Spacer()
-                            Button(copied ? "Copied" : "Copy", action: onCopy)
-                        }
-                        ScrollView {
-                            Text(item.text)
-                                .font(.system(size: 14))
-                                .lineSpacing(4)
-                                .textSelection(.enabled)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                        .frame(maxHeight: 320)
-                    }
-                    .padding(20)
-                    .frame(width: 380)
-                }
+                .font(.system(size: 11))
+                .buttonStyle(.plain)
             }
-            .padding(.trailing, 4)
-            .background(.primary.opacity(hovering ? 0.055 : 0.025), in: RoundedRectangle(cornerRadius: 10))
-            .padding(.horizontal, 12)
+            .padding(.horizontal, 10)
+            .frame(height: 76)
+            .background(.primary.opacity(hovering ? 0.07 : 0.025), in: RoundedRectangle(cornerRadius: 9))
             .onHover { hovering = $0 }
         }
     }

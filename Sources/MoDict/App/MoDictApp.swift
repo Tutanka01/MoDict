@@ -37,7 +37,7 @@ struct MoDictApp: App {
             MenuBarView(app: AppModel.shared)
         } label: {
             HStack(spacing: 3) {
-                Image(systemName: menuBarSymbol)
+                menuBarIcon
                 // Best-effort badge: macOS caches the label until hover, so it
                 // only ever needs to be approximately current (opt-in anyway).
                 if let amount = menuBarAmount {
@@ -66,13 +66,20 @@ struct MoDictApp: App {
         }
     }
 
-    private var menuBarSymbol: String {
+    /// The mark at rest, knocked out of a tile while dictating, dimmed when
+    /// paused; a download keeps the system's arrow so progress reads at a glance.
+    @ViewBuilder private var menuBarIcon: some View {
         switch controller.phase {
         case .recording, .transcribing:
-            return "waveform.circle.fill"
+            Image(nsImage: MenuBarGlyph.active.image)
         case .idle:
-            if case .downloading = controller.modelState { return "arrow.down.circle" }
-            return "waveform"
+            if case .downloading = controller.modelState {
+                Image(systemName: "arrow.down.circle")
+            } else if !settings.dictationEnabled {
+                Image(nsImage: MenuBarGlyph.paused.image)
+            } else {
+                Image(nsImage: MenuBarGlyph.idle.image)
+            }
         }
     }
 }

@@ -33,11 +33,24 @@ final class SettingsStore: ObservableObject {
     }
 
     @Published var hotkeyMode: HotkeyMonitor.Mode {
-        didSet { defaults.set(hotkeyMode.rawValue, forKey: "hotkeyMode") }
+        didSet {
+            defaults.set(hotkeyMode.rawValue, forKey: "hotkeyMode")
+            if oldValue != hotkeyMode { gestureHintsRemaining = Self.guidedDictations }
+        }
     }
     @Published var dictationKey: DictationKey {
-        didSet { defaults.set(dictationKey.rawValue, forKey: "dictationKey") }
+        didSet {
+            defaults.set(dictationKey.rawValue, forKey: "dictationKey")
+            if oldValue != dictationKey { gestureHintsRemaining = Self.guidedDictations }
+        }
     }
+    /// How many more successful dictations still show the stop gesture and the
+    /// Esc hint on the HUD. Guidance fades once the gesture is learned, and
+    /// returns when the shortcut or activation mode changes.
+    @Published private(set) var gestureHintsRemaining: Int {
+        didSet { defaults.set(gestureHintsRemaining, forKey: "gestureHintsRemaining") }
+    }
+    static let guidedDictations = 8
     @Published var playSounds: Bool {
         didSet { defaults.set(playSounds, forKey: "playSounds") }
     }
@@ -53,6 +66,12 @@ final class SettingsStore: ObservableObject {
     }
     @Published var speechModel: SpeechModel {
         didSet { defaults.set(speechModel.rawValue, forKey: "speechModel") }
+    }
+    /// Show words while speaking. Models that don't stream (Qwen, cloud) get
+    /// a preview transcribed on this Mac by Parakeet when its model is on
+    /// disk; the pasted text always comes from `speechModel`.
+    @Published var livePreview: Bool {
+        didSet { defaults.set(livePreview, forKey: "livePreview") }
     }
     @Published private(set) var hasOpenRouterKey: Bool
     /// Persistent CoreAudio device UID; empty string = system default.
@@ -112,6 +131,7 @@ final class SettingsStore: ObservableObject {
             speechModel = initialModel
             defaults.set(initialModel.rawValue, forKey: "speechModel")
         }
+        livePreview = defaults.object(forKey: "livePreview") as? Bool ?? true
         inputDeviceUID = defaults.string(forKey: "inputDeviceUID") ?? ""
         if defaults.bool(forKey: Self.nearPointerMigrationKey) {
             hudPosition = HUDPosition(rawValue: defaults.string(forKey: "hudPosition") ?? "") ?? .nearPointer
@@ -126,7 +146,19 @@ final class SettingsStore: ObservableObject {
         keepMicWarm = defaults.object(forKey: "keepMicWarm") as? Bool ?? false
         menuBarCost = MenuBarCost(rawValue: defaults.string(forKey: "menuBarCost") ?? "") ?? .iconOnly
         onboardingCompleted = defaults.bool(forKey: "onboardingCompleted")
+        if let remaining = defaults.object(forKey: "gestureHintsRemaining") as? Int {
+            gestureHintsRemaining = max(0, remaining)
+        } else {
+            // Existing installations already know their gesture; only a fresh
+            // setup starts with the guided dictations.
+            gestureHintsRemaining = defaults.bool(forKey: "onboardingCompleted") ? 0 : Self.guidedDictations
+        }
         launchAtLogin = SMAppService.mainApp.status == .enabled
+    }
+
+    /// Counts one successful dictation toward learning the gesture.
+    func recordGuidedDictation() {
+        if gestureHintsRemaining > 0 { gestureHintsRemaining -= 1 }
     }
 
     func saveOpenRouterKey(_ key: String) throws {

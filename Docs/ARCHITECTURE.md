@@ -42,10 +42,14 @@ Sources/MoDict/
 │       └── OpenRouterEngine.swift    [stt] HTTPS batch transcription, in-memory WAV
 └── UI/
     ├── Theme.swift               [core]    design tokens (see Docs/DESIGN.md)
+    ├── Mark.swift                          the mark: app glyph + menu bar template images
     ├── HUD/
-    │   ├── HUDController.swift   [hud]     show/hide/update the floating panel
+    │   ├── HUDController.swift   [hud]     show/hide/update the floating panel, placement
     │   ├── HUDPanel.swift        [hud]     non-activating NSPanel subclass
-    │   └── HUDView.swift         [hud]     SwiftUI composition card + rolling preview
+    │   ├── HUDView.swift         [hud]     SwiftUI model, smoked-glass capsule/card morph, states
+    │   ├── HUDVoicePrint.swift   [hud]     the living mark: voice waveform + blinking cursor
+    │   ├── HUDCaption.swift      [hud]     preview ink stamps + TextRenderer (entrance, caret, sweep)
+    │   └── TextCaretLocator.swift [hud]    read-only AX lookup of the text cursor
     ├── MenuBar/
     │   └── MenuBarView.swift     [menubar] popover content (status, history, usage, footer)
     ├── Onboarding/
@@ -228,8 +232,8 @@ actor QwenAudioEngine: TranscriptionEngine {
   flat into `cacheDir` (config.json, vocab.json, `*.safetensors`, shard index) and skips
   files already present, so an interrupted download resumes on the next attempt.
   `modelsExist(at:)` requires `vocab.json` plus the weight file(s).
-- Batch only: `startStreamingSession` returns nil, so the HUD has no live preview while Qwen
-  is active (documented in Settings). Transcription applies the same `AudioConditioner` pass
+- Batch only: `startStreamingSession` returns nil. The live preview while Qwen is active comes
+  from Parakeet running locally as the preview engine (see `DictationController`). Transcription applies the same `AudioConditioner` pass
   and raw-buffer retry as Parakeet, then `Qwen3DecodingOptions(language:repetitionPenalty:)`.
 - The runtime is the MLX binary framework `Cmlx.framework`; `make bundle` embeds it and the
   matching rpath, and the `disable-library-validation` entitlement is mandatory. See
@@ -497,7 +501,13 @@ enum HUDState: Equatable {
     /// three-line bottom-pinned viewport shows the tail under a constant top
     /// fade — no ScrollView, no per-partial animation.
     func setPartial(_ partial: PartialTranscript?)
-    func setActionHint(_ hint: String) // release vs hands-free stop gesture
+    /// Release vs hands-free stop gesture. Shown only while the gesture is being
+    /// learned (`settings.gestureHintsRemaining > 0`), unless `persistent`.
+    func setActionHint(_ hint: String, persistent: Bool = false)
+    func setSilenceWarning(_ warning: Bool)  // silence watchdog
+    var caretLocator: () -> NSRect?          // injectable; defaults to TextCaretLocator
+    /// Pure placement geometry (unit-tested): panel origin + pinned card edges.
+    static func layout(position:anchor:visible:safeTop:) -> (origin: NSPoint, placement: HUDPlacement)
     func hide()                    // animate out, then orderOut
 }
 ```
@@ -505,8 +515,11 @@ Panel: `NSPanel` subclass, `styleMask [.nonactivatingPanel, .fullSizeContentView
 `canBecomeKey/Main = false`, `level = .statusBar`, `collectionBehavior =
 [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]`, `isFloatingPanel`,
 `hidesOnDeactivate = false`, clear/transparent, `ignoresMouseEvents = true`,
-`NSHostingView` content. Default position is near the pointer captured on key-down; legacy
-bottom/top positions remain selectable. Edge modes pin the card's near edge — top-center pins
+`NSHostingView` content. Default position (`nearPointer`, shown as “At your cursor”) hangs
+the card below the text cursor that `TextCaretLocator` reads on key-down (read-only AX,
+40 ms messaging timeout, reusing the paste permission), falling back to the pointer captured
+on key-down when the focused app reports no caret. The anchor is frozen for the session.
+Legacy bottom/top positions remain selectable. Edge modes pin the card's near edge — top-center pins
 the card top just below the menu bar (and below the camera housing via `safeAreaInsets` when
 the menu bar auto-hides) and grows downward only; bottom-center mirrors it — so the growing
 preview never crosses into the notch band. All visuals per Docs/DESIGN.md.
@@ -533,7 +546,9 @@ The view drives real actions: `Permissions.*`, `app.controller.prepareEngine()`,
   `languageHint` ("auto" = the Mac's language when supported, else model detection),
   `inputDeviceUID` (""), `hudPosition`
   (.nearPointer/.bottomCenter/.topCenter, near-pointer default + one-time migration),
-  `keepMicWarm`, `launchAtLogin`, `onboardingCompleted`, `dictationEnabled`.
+  `keepMicWarm`, `launchAtLogin`, `onboardingCompleted`, `dictationEnabled`,
+  `gestureHintsRemaining` (HUD guidance: 8 on a fresh install, 0 on upgrade, decremented by
+  `recordGuidedDictation()` on each successful paste, reset when the key or mode changes).
 - `Permissions`: static helpers — `microphoneGranted`, `requestMicrophone() async -> Bool`,
   `accessibilityGranted`, `requestAccessibility()`, `inputMonitoringGranted`,
   `requestInputMonitoring()`, `openSettings(pane:)` deep-links.
@@ -549,6 +564,9 @@ The view drives real actions: `Permissions.*`, `app.controller.prepareEngine()`,
   flight, vocabulary applied, nil whenever none is running),
   `activate()` (start hotkey + prepare engine), `deactivate()`,
   `prepareEngine()` (download+load the selected model when it is not ready),
+  `preparePreviewEngine()` (load Parakeet as the preview engine for models that don't stream,
+  when `settings.livePreview` is on and its model is on disk; never downloads; unloads it
+  otherwise),
   `downloadModel(_:)`, `selectModel(_:)`, `deleteModel(_:)`, `modelState(for:)`
   (per-model state for Settings), plus `modelStates`, `isManagingModel`, `setDictationEnabled(_:)`,
   `startDictation() -> Bool` (false when the begin
@@ -556,7 +574,9 @@ The view drives real actions: `Permissions.*`, `app.controller.prepareEngine()`,
   `stopDictationAndTranscribe()`, `cancelDictation()`. Transcription runs under a timeout
   (`max(30 s, 4×audio + 5 s)` locally, 75 s minimum for cloud) so a wedged engine
   cannot leave the app stuck in `.transcribing`.
-  Streaming: `startDictation` opens a best-effort preview session (mic `onChunk` → session;
+  Streaming: `startDictation` opens a best-effort preview session on the preview engine (the
+  selected engine when it streams, otherwise Parakeet when Live preview is on and downloaded;
+  mic `onChunk` → session;
   `StreamingTranscriptAssembler` merges overlapping hypotheses into a cumulative document;
   updates hop to the main actor, drop when the recordingID is stale, get vocabulary applied,
   and land in `partialTranscript` + `hud.setPartial`). It is never authoritative. The session

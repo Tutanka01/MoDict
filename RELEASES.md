@@ -13,6 +13,55 @@ and publishes `MoDict-X.Y.Z.dmg` on the
 - Highlight 2
 -->
 
+## v0.8.0 — 2026-09-24
+
+Your words, at your cursor: the HUD moves to where the text will land, every
+model gets a live preview, and MoDict gets a mark of its own.
+
+- **The preview hangs under your text cursor.** On key-down MoDict reads the
+  focused field's insertion point (read-only Accessibility, 40 ms timeout) and
+  hangs the HUD just below that line, the words starting at the cursor's x and
+  growing down and to the right, away from what you are writing. It flips above
+  the line near the bottom of the screen; apps that report no caret (terminals,
+  many Electron apps) fall back to the pointer. The anchor never moves during a
+  session.
+- **Live preview for every model.** Qwen3-ASR and cloud models don't stream;
+  when Parakeet is on disk it now transcribes a preview on this Mac while you
+  speak (Settings → Dictation → Live preview, on by default). Nothing is
+  downloaded for it, nothing extra leaves your Mac, and the pasted text still
+  comes from the selected model.
+- **Words that write themselves.** New words condense out of a blur behind a
+  live cursor, a word the recognizer revises visibly rewrites itself, tentative
+  words brighten when confirmed, and past three lines the older ones glide up
+  through a fade. All of it is drawing only: each partial is still one layout
+  pass, so the caption never swims.
+- **One glass surface.** The HUD is a capsule while you speak, grows once into a
+  card when words arrive (fixed width, so the caption never rewraps), and turns
+  back into a capsule for "Pasted", with a check that draws itself. Smoked
+  Liquid Glass on macOS 26 (the `hudWindow` material on macOS 15), always dark,
+  so it reads over a white page and a black terminal alike. The waveform and a
+  blinking text cursor replace the voice aura and the recording dot; the level
+  now glides at 60/120 Hz instead of stepping with each audio buffer.
+- **Guidance fades.** The stop gesture and the esc chip show for your first 8
+  dictations, then step aside; they come back when you change the key or the
+  activation mode (upgraded installs start without them). The m:ss clock
+  appears only after 10 s. The silence warning now fires after 2.5 s of real
+  silence instead of about 6 s, and still clears on the first syllable.
+- **A mark of its own**: a voice waveform whose peak is a text cursor. It is the
+  menu bar icon (knocked out of a tile while dictating, dimmed when paused),
+  the glyph in Settings and onboarding, and a layered Liquid Glass app icon on
+  macOS 26 (light, dark, tinted and clear styles).
+- **A quieter menu and Settings.** The popover leads with your recent
+  dictations; the status card appears only when there is something to know
+  (paused, recording, downloading, an issue). Settings moves to a native
+  sidebar with plain descriptions of what each pane controls.
+- Reduce Motion: no wobble, ripple, caret blink, ink entrance or shimmer; the
+  voice row stays a slow level meter.
+
+Requires macOS 15+ on Apple Silicon. Local builds keep the `MoDict Dev`
+signing identity and the `com.modict.app` bundle ID, so TCC permissions,
+models and history survive the update.
+
 ## v0.7.0 — 2026-09-20
 
 The interface refresh release: the menu bar, Settings, onboarding and the HUD

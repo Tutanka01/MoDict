@@ -22,9 +22,9 @@ superwhisper, built to disappear until you need it.
   as a smaller, faster Neural Engine model with live preview.
 - **Choose your model.** Manage Qwen3-ASR and Parakeet locally, or select one of three
   optional OpenRouter transcription models in Settings → Model.
-- **It stays out of the way.** A small three-line composition preview appears near your
-  pointer and vanishes the instant the text lands. No dashboard, no Dock icon —
-  just a menu bar glyph.
+- **It stays out of the way.** A small preview hangs just below your text cursor, where
+  the words will land, and vanishes the instant the text lands. No dashboard, no Dock
+  icon — just a menu bar glyph.
 
 ## Requirements
 
@@ -118,9 +118,10 @@ Cloud dictation uploads the finished recording over HTTPS to OpenRouter, which r
 it to a model provider. Providers may retain audio or use it to improve models,
 depending on their policies; [review OpenRouter's privacy policy](https://openrouter.ai/privacy/)
 and your account privacy settings before using it with sensitive speech. Usage can
-incur charges. Cloud recordings are limited to 10 minutes. Cloud models have no live
-transcript preview. Switching back to Qwen3-ASR or Parakeet keeps subsequent audio
-local.
+incur charges. Cloud recordings are limited to 10 minutes. Cloud models don't stream a
+live preview; when Parakeet is downloaded and Live preview is on, Parakeet transcribes the
+preview on your Mac, and the pasted text still comes from the cloud model. Switching back
+to Qwen3-ASR or Parakeet keeps subsequent audio local.
 
 MoDict tracks what cloud dictation costs. Every OpenRouter response reports the exact
 charge for that request, and MoDict keeps a local ledger of dictations, durations and
@@ -158,7 +159,9 @@ transcriptions live in the menu bar popover; click one to copy it again.
 
 1. A `CGEventTap` watches the right ⌘ key and starts capturing 16 kHz mono audio through
    `AVAudioEngine`.
-2. While you speak, the HUD follows recording; Parakeet also shows a rolling text preview.
+2. While you speak, the HUD shows your voice just below the text cursor. Parakeet streams a
+   live text preview, also for Qwen3-ASR and cloud models when it is downloaded and Live
+   preview is on.
 3. On release, the selected model transcribes the full clip once. A cloud model
    sends the recording to OpenRouter only at this point.
 4. The text is placed on the pasteboard, pasted with a synthetic ⌘V at your cursor, and

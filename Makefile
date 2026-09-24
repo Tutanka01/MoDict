@@ -29,7 +29,7 @@
 APP_NAME  := MoDict
 BUNDLE_ID := com.modict.app
 PRODUCT   := MoDict
-VERSION   := 0.7.0
+VERSION   := 0.8.0
 BUILD     ?= 1
 
 # Stable signing identity. Create it once with ./scripts/dev-cert.sh so macOS
@@ -82,6 +82,10 @@ ICON_SRC := Support/generate-icon.swift
 ICON_PNG := $(BUILD_DIR)/Icon-1024.png
 ICONSET  := $(BUILD_DIR)/AppIcon.iconset
 ICNS     := $(BUILD_DIR)/AppIcon.icns
+# Layered Liquid Glass icon (Icon Composer format): light, dark, tinted and
+# clear variants on macOS 26+. Compiled by actool into Assets.car at bundle time.
+GLASS_ICON := Support/AppIcon.icon
+ICON_CATALOG := $(BUILD_DIR)/icon-catalog
 RELEASE_ZIP := $(BUILD_DIR)/$(APP_NAME)-$(VERSION)-$(BUILD).zip
 DMG         := $(BUILD_DIR)/$(APP_NAME)-$(VERSION).dmg
 DMG_STAGING := $(BUILD_DIR)/dmg-staging
@@ -155,6 +159,23 @@ bundle: build icon
 	    "$(PLIST_IN)" > "$(CONTENTS)/Info.plist"
 	printf 'APPL????' > "$(CONTENTS)/PkgInfo"
 	cp "$(ICNS)" "$(CONTENTS)/Resources/AppIcon.icns"
+	@# The layered icon needs an actool that reads Icon Composer's .icon (Xcode
+	@# 26+). It also renders a matching AppIcon.icns for macOS 15. Any failure
+	@# keeps the flat icon above, so older toolchains still bundle a valid app.
+	@rm -rf "$(ICON_CATALOG)"; mkdir -p "$(ICON_CATALOG)"; \
+	if xcrun actool "$(GLASS_ICON)" --compile "$(ICON_CATALOG)" \
+		--platform macosx --target-device mac --minimum-deployment-target 15.0 \
+		--app-icon AppIcon --include-all-app-icons \
+		--output-partial-info-plist "$(ICON_CATALOG)/partial.plist" \
+		--errors --output-format human-readable-text >/dev/null 2>&1 \
+		&& [ -f "$(ICON_CATALOG)/Assets.car" ] && [ -f "$(ICON_CATALOG)/AppIcon.icns" ]; then \
+		cp "$(ICON_CATALOG)/Assets.car" "$(CONTENTS)/Resources/Assets.car"; \
+		cp "$(ICON_CATALOG)/AppIcon.icns" "$(CONTENTS)/Resources/AppIcon.icns"; \
+		/usr/libexec/PlistBuddy -c "Add :CFBundleIconName string AppIcon" "$(CONTENTS)/Info.plist"; \
+		echo "Embedded Liquid Glass icon (Assets.car)"; \
+	else \
+		echo "note: actool cannot compile $(GLASS_ICON); bundling the flat icon only."; \
+	fi
 	@if [ -n "$(CMLX_FRAMEWORK)" ]; then \
 		cp -R "$(CMLX_FRAMEWORK)" "$(FRAMEWORK_DIR)/"; \
 	fi

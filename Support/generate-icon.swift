@@ -4,11 +4,13 @@
 //
 //     swift Support/generate-icon.swift path/to/Icon-1024.png
 //
-// Draws the 1024×1024 master icon described in Docs/DESIGN.md "App icon":
-// a near-black squircle with a ~10% margin, and five white capsule bars forming
-// a symmetric waveform silhouette with the centre bar tallest. Monochrome, no
-// border, only a barely-visible vertical luminance shift (<4%). The Makefile
-// `icon` target feeds the result to `sips` + `iconutil` to produce AppIcon.icns.
+// Draws the flat 1024×1024 fallback icon described in Docs/DESIGN.md "App icon":
+// a near-black squircle with a ~10% margin and the white mark (a voice waveform
+// whose peak is a text cursor). Monochrome, no border, only a barely-visible
+// vertical luminance shift (<4%). The Makefile `icon` target feeds the result to
+// `sips` + `iconutil` to produce AppIcon.icns. When the toolchain's actool can
+// compile Support/AppIcon.icon, the bundle ships that layered Liquid Glass icon
+// instead, and this file is only the fallback.
 
 import Foundation
 import CoreGraphics
@@ -79,28 +81,44 @@ context.drawLinearGradient(
     options: [])
 context.restoreGState()
 
-// MARK: - Waveform bars (five white capsules, centre tallest, symmetric)
+// MARK: - The mark: a voice waveform whose peak is a text cursor (I-beam)
+//
+// Same proportions as `MoDictMark` (Sources/MoDict/UI/Mark.swift) and the layers
+// of Support/AppIcon.icon; keep all three in sync.
 
-let barWidth: CGFloat = 84
-let barGap: CGFloat = 46
-let barHeights: [CGFloat] = [230, 370, 520, 370, 230]
-
-let clusterWidth = CGFloat(barHeights.count) * barWidth + CGFloat(barHeights.count - 1) * barGap
-var barX = (canvas - clusterWidth) / 2
+let markSide = bodyRect.width * (560.0 / 1024.0)
+let barWidth = 0.11 * markSide
+let barGap = 0.075 * markSide
+let cursorStem = 0.075 * markSide
+let serifWidth = 0.23 * markSide
+let serifThickness = 0.075 * markSide
+let cursorHeight = 0.86 * markSide
 let centerY = canvas / 2
 
-context.setFillColor(gray(1))
-for height in barHeights {
-    let barRect = CGRect(x: barX, y: centerY - height / 2, width: barWidth, height: height)
-    let capsule = CGPath(
-        roundedRect: barRect,
-        cornerWidth: barWidth / 2,
-        cornerHeight: barWidth / 2,
-        transform: nil)
-    context.addPath(capsule)
+func fillCapsule(_ rect: CGRect) {
+    let radius = min(rect.width, rect.height) / 2
+    context.addPath(CGPath(roundedRect: rect, cornerWidth: radius, cornerHeight: radius, transform: nil))
     context.fillPath()
-    barX += barWidth + barGap
 }
+
+context.setFillColor(gray(1))
+var markX = canvas / 2 - (4 * barWidth + serifWidth + 4 * barGap) / 2
+func bar(_ proportion: CGFloat) {
+    let height = proportion * markSide
+    fillCapsule(CGRect(x: markX, y: centerY - height / 2, width: barWidth, height: height))
+    markX += barWidth + barGap
+}
+bar(0.30)
+bar(0.56)
+let cursorX = markX + serifWidth / 2
+let cursorBottom = centerY - cursorHeight / 2
+fillCapsule(CGRect(x: cursorX - cursorStem / 2, y: cursorBottom, width: cursorStem, height: cursorHeight))
+fillCapsule(CGRect(x: cursorX - serifWidth / 2, y: cursorBottom, width: serifWidth, height: serifThickness))
+fillCapsule(CGRect(x: cursorX - serifWidth / 2, y: cursorBottom + cursorHeight - serifThickness,
+                   width: serifWidth, height: serifThickness))
+markX += serifWidth + barGap
+bar(0.56)
+bar(0.30)
 
 // MARK: - Encode PNG
 

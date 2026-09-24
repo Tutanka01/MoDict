@@ -18,14 +18,15 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .about: "info.circle"
         }
     }
+    /// What the pane controls, stated plainly, the way System Settings does.
     var subtitle: String {
         switch self {
-        case .general: "A shortcut that feels like second nature."
-        case .dictation: "Your voice in. Your words out."
-        case .vocabulary: "Make names, terms, and expressions your own."
-        case .model: "Choose where and how your voice becomes text."
-        case .appearance: "A little presence. Exactly where you need it."
-        case .usage: "Your activity and costs, kept on this Mac."
+        case .general: "The key and gesture that start dictation."
+        case .dictation: "Language, microphone and clipboard."
+        case .vocabulary: "Names and terms, spelled your way."
+        case .model: "Where your voice becomes text."
+        case .appearance: "Where the preview appears, and how MoDict sounds."
+        case .usage: "Dictations and cloud costs, recorded on this Mac."
         case .about: "A quiet tool for your everyday words."
         }
     }
@@ -46,77 +47,70 @@ struct SettingsView: View {
     }
 
     var body: some View {
-        HStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 24) {
-                HStack(spacing: 10) {
-                    AppGlyph(size: 34)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("MoDict").font(.system(size: 16, weight: .semibold))
-                        Text("Make yourself heard.").font(.system(size: 10)).foregroundStyle(.secondary)
-                    }
+        NavigationSplitView {
+            List(selection: sidebarSelection) {
+                ForEach(SettingsPane.allCases) { pane in
+                    Label(pane.title, systemImage: pane.symbol)
+                        .tag(pane)
                 }
-                .padding(.horizontal, 12)
-                .padding(.top, 12)
-
-                VStack(spacing: 4) {
-                    ForEach(SettingsPane.allCases) { pane in
-                        Button { selection = pane } label: {
-                            Label(pane.title, systemImage: pane.symbol)
-                                .font(.system(size: 13, weight: selection == pane ? .semibold : .regular))
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 11)
-                                .contentShape(RoundedRectangle(cornerRadius: 9))
-                                .background(.primary.opacity(selection == pane ? 0.09 : 0), in: RoundedRectangle(cornerRadius: 9))
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityAddTraits(selection == pane ? .isSelected : [])
-                    }
-                }
-                Spacer()
-                VStack(alignment: .leading, spacing: 7) {
-                    Label(settings.speechModel.isCloud ? "Cloud transcription" : "On-device transcription",
-                          systemImage: settings.speechModel.isCloud ? "cloud" : "lock.shield")
-                        .font(.system(size: 11, weight: .medium))
-                    Text(settings.speechModel.displayName)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                }
-                .padding(12)
             }
-            .padding(12)
-            .frame(width: 208)
-            .background(.ultraThinMaterial)
-
-            Divider()
-
+            .navigationSplitViewColumnWidth(min: 190, ideal: 210, max: 240)
+            .safeAreaInset(edge: .bottom, spacing: 0) { sidebarFooter }
+            .toolbar(removing: .sidebarToggle)
+        } detail: {
             VStack(alignment: .leading, spacing: 0) {
-                VStack(alignment: .leading, spacing: 7) {
+                VStack(alignment: .leading, spacing: 6) {
                     Text(selection.title)
-                        .font(.system(size: 28, weight: .semibold))
-                        .tracking(-0.7)
+                        .font(.system(size: 26, weight: .semibold))
+                        .tracking(-0.6)
                         .accessibilityAddTraits(.isHeader)
                     Text(selection.subtitle)
                         .font(.system(size: 13))
                         .foregroundStyle(.secondary)
                 }
                 .padding(.horizontal, 28)
-                .padding(.top, 28)
-                .padding(.bottom, 10)
+                .padding(.top, 8)
+                .padding(.bottom, 6)
                 pane
                     .id(selection)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .background(Color(nsColor: .windowBackgroundColor))
+            .toolbar(removing: .title)
         }
+        .navigationTitle(selection.title)
         .tint(.primary)
         .frame(minWidth: 780, idealWidth: 820, minHeight: 620, idealHeight: 680)
+    }
+
+    /// The sidebar's `List` wants an optional selection; a pane is always shown.
+    private var sidebarSelection: Binding<SettingsPane?> {
+        Binding(get: { selection }, set: { if let pane = $0 { selection = pane } })
+    }
+
+    /// The mark, and where your voice goes: always visible, whatever the pane.
+    private var sidebarFooter: some View {
+        HStack(spacing: 10) {
+            AppGlyph(size: 28)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("MoDict")
+                    .font(.system(size: 12, weight: .semibold))
+                Label(settings.speechModel.isCloud ? "Cloud" : "On this Mac",
+                      systemImage: settings.speechModel.isCloud ? "cloud" : "lock.shield")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .help(settings.speechModel.displayName)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 14)
+        .accessibilityElement(children: .combine)
     }
 
     @ViewBuilder private var pane: some View {
         switch selection {
         case .general: SettingsGeneralTab(settings: settings, controller: controller)
-        case .dictation: SettingsDictationTab(settings: settings)
+        case .dictation: SettingsDictationTab(settings: settings, controller: controller)
         case .vocabulary: SettingsVocabularyTab(vocabulary: vocabulary)
         case .model: SettingsModelTab(settings: settings, controller: controller)
         case .appearance: SettingsAppearanceTab(settings: settings)
@@ -307,6 +301,7 @@ private struct SettingsPermissionsSection: View {
 
 private struct SettingsDictationTab: View {
     @ObservedObject var settings: SettingsStore
+    let controller: DictationController
     @State private var inputDevices: [MicrophoneCapture.InputDevice] = []
 
     private var selectedDeviceMissing: Bool {
@@ -341,6 +336,16 @@ private struct SettingsDictationTab: View {
             }
 
             Section {
+                Toggle("Live preview", isOn: $settings.livePreview)
+                    .disabled(settings.speechModel == .parakeetV3)
+                    .onChange(of: settings.livePreview) { controller.preparePreviewEngine() }
+            } header: {
+                Text("While you speak")
+            } footer: {
+                Text(livePreviewFooter)
+            }
+
+            Section {
                 Toggle("Restore clipboard after insert", isOn: $settings.restoreClipboard)
             } header: {
                 Text("Output")
@@ -350,6 +355,16 @@ private struct SettingsDictationTab: View {
         }
         .formStyle(.grouped)
         .onAppear { inputDevices = MicrophoneCapture.availableInputDevices() }
+    }
+
+    private var livePreviewFooter: String {
+        if settings.speechModel == .parakeetV3 {
+            return "Parakeet shows your words as you speak."
+        }
+        guard SpeechModel.parakeetV3.isDownloaded else {
+            return "Download Parakeet in Model to see your words as you speak. The pasted text still comes from \(settings.speechModel.displayName)."
+        }
+        return "Parakeet shows your words as you speak, on this Mac. The pasted text still comes from \(settings.speechModel.displayName)."
     }
 }
 
@@ -415,7 +430,7 @@ private struct SettingsAppearanceTab: View {
         Form {
             Section {
                 HStack(spacing: 12) {
-                    positionOption(.nearPointer, title: "Near pointer", symbol: "cursorarrow")
+                    positionOption(.nearPointer, title: "At your cursor", symbol: "character.cursor.ibeam")
                     positionOption(.bottomCenter, title: "Bottom", symbol: "rectangle.bottomthird.inset.filled")
                     positionOption(.topCenter, title: "Top", symbol: "rectangle.topthird.inset.filled")
                 }
@@ -423,7 +438,7 @@ private struct SettingsAppearanceTab: View {
             } header: {
                 Text("Recording indicator")
             } footer: {
-                Text("A private preview appears while you speak. Your words are pasted only when you stop.")
+                Text("At your cursor, the preview hangs just below the text cursor, or by the pointer in apps that don’t report one. Your words are pasted only when you stop.")
             }
             Section {
                 Toggle("Play sounds", isOn: $settings.playSounds)

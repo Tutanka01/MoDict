@@ -269,6 +269,7 @@ final class DictationController: ObservableObject {
         }
         microphone.warmUp()
         prepareEngine()
+        preparePreviewEngine()
         observePermissionChanges()
     }
 
@@ -359,6 +360,9 @@ final class DictationController: ObservableObject {
                 self.setModelState(.failed(error.localizedDescription), for: model)
             }
             self.isManagingModel = false
+            // A freshly downloaded Parakeet (or one just unloaded above) may be
+            // the preview engine for the selected model.
+            self.preparePreviewEngine()
         }
     }
 
@@ -376,6 +380,7 @@ final class DictationController: ObservableObject {
             guard let self else { return }
             await self.engine(for: previous).unload()
             if model.isCloud || model.isDownloaded { self.prepareEngine() }
+            self.preparePreviewEngine()
         }
     }
 
@@ -437,6 +442,29 @@ final class DictationController: ObservableObject {
         engine(for: settings.speechModel)
     }
 
+    /// The engine streaming the live preview: the selected one when it streams
+    /// (Parakeet); otherwise Parakeet running on this Mac for the preview
+    /// only, when Live preview is on and its model is on disk. Preview-only
+    /// either way: the paste always comes from the selected engine's batch pass.
+    private var previewEngine: (any TranscriptionEngine)? {
+        if settings.speechModel == .parakeetV3 { return fluidAudioEngine }
+        guard settings.livePreview, SpeechModel.parakeetV3.isDownloaded else { return nil }
+        return fluidAudioEngine
+    }
+
+    /// Loads (or releases) Parakeet as the preview engine for models that
+    /// don't stream. Never downloads: without the model on disk there is
+    /// simply no preview. Safe to call repeatedly.
+    func preparePreviewEngine() {
+        guard settings.speechModel != .parakeetV3, !isManagingModel else { return }
+        let engine = fluidAudioEngine
+        if settings.livePreview, SpeechModel.parakeetV3.isDownloaded {
+            Task { try? await engine.prepare { _ in } }
+        } else {
+            Task { await engine.unload() }
+        }
+    }
+
     // MARK: Dictation flow
 
     @discardableResult
@@ -467,7 +495,7 @@ final class DictationController: ObservableObject {
         // Live partials are best-effort: the session buffers audio from the very
         // first chunk while the recognizer spins up in the background; a start
         // failure only means no streaming preview — batch still transcribes.
-        streamingSessionBox.value = selectedEngine.startStreamingSession(
+        streamingSessionBox.value = previewEngine?.startStreamingSession(
             languageHint: settings.languageHint
         ) { [weak self] partial in
             Task { @MainActor [weak self] in
@@ -620,6 +648,7 @@ final class DictationController: ObservableObject {
             lastInsertedText = text
             history.add(text, costUSD: cost)
             sounds.dictationSucceeded()
+            settings.recordGuidedDictation()
             hud.setInsertedWordCount(text.split(whereSeparator: \.isWhitespace).count)
             transientHUD(.success, dwell: Theme.successDwell)
         case .secureInputBlocked:
@@ -715,12 +744,14 @@ final class DictationController: ObservableObject {
 
     private var recordingActionHint: String {
         switch settings.hotkeyMode {
-        case .pushToTalk:
+        case .pushToTalk, .hybrid:
+            // The exact stop gesture while the key is held (DESIGN.md). The
+            // hybrid tap alternative is taught by the setup guide and the
+            // menu bar — the HUD row is too tight for both, and squeezing
+            // them in is what stacked the title vertically.
             return "Release to paste"
         case .toggle:
             return "Press again to paste"
-        case .hybrid:
-            return "Release to paste · tap for hands-free"
         }
     }
 
@@ -731,38 +762,43 @@ final class DictationController: ObservableObject {
     /// signal without resetting the session.
     private func observeRecordingLevel(_ level: Float) {
         guard phase == .recording else { return }
+        let now = ProcessInfo.processInfo.systemUptime
         if level >= Self.silenceLevelFloor {
-            silenceSamples = 0
+            silenceStartedAt = nil
             if silenceWarned {
                 silenceWarned = false
-                hud.setActionHint(recordingActionHint)
+                hud.setSilenceWarning(false)
             }
             return
         }
-        silenceSamples += 1
-        let elapsed = ProcessInfo.processInfo.systemUptime - recordingStartedAt
-        if !silenceWarned, silenceSamples >= Self.silenceSampleLimit, elapsed >= Self.silenceGraceSeconds {
+        let silentSince = silenceStartedAt ?? now
+        silenceStartedAt = silentSince
+        let elapsed = now - recordingStartedAt
+        if !silenceWarned, now - silentSince >= Self.silenceWarningSeconds, elapsed >= Self.silenceGraceSeconds {
             silenceWarned = true
-            hud.setActionHint("Hearing nothing — check your microphone")
+            hud.setSilenceWarning(true)
         }
     }
 
     private func silenceWatchdogStart() {
-        silenceSamples = 0
+        silenceStartedAt = nil
         silenceWarned = false
     }
 
     private static let silenceLevelFloor: Float = 0.02
-    /// ~2.5 s at 30 fps of smoothed near-zero samples, after a 1.5 s grace so a
-    /// slow speaker opening is never flagged.
-    private static let silenceSampleLimit = 75
+    /// 2.5 s of near-zero level, measured in time: level samples arrive once
+    /// per audio buffer (~12 Hz), not per frame. A 1.5 s grace means a slow
+    /// speaker opening is never flagged.
+    private static let silenceWarningSeconds: TimeInterval = 2.5
     private static let silenceGraceSeconds: TimeInterval = 1.5
-    private var silenceSamples = 0
+    private var silenceStartedAt: TimeInterval?
     private var silenceWarned = false
 
     private func handleHandsFree() {
         guard phase == .recording else { return }
-        hud.setActionHint("Press again to paste")
+        // Persistent: the way to stop just changed mid-session, so say so even
+        // after the hold gesture is learned.
+        hud.setActionHint("Press again to paste", persistent: true)
     }
 
     private func handleMicrophoneInterruption(_ error: MicrophoneCapture.CaptureError) {
