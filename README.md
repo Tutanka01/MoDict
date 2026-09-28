@@ -19,7 +19,8 @@ superwhisper, built to disappear until you need it.
   model sends each finished recording to OpenRouter and its model provider.
 - **French-first by default.** New installations use Qwen3-ASR 1.7B locally through
   MLX for stronger multilingual and French transcription. Parakeet v3 remains available
-  as a smaller, faster Neural Engine model with live preview.
+  as a smaller, faster Neural Engine model with live preview, steered so spontaneous
+  French no longer slides into English.
 - **Choose your model.** Manage Qwen3-ASR and Parakeet locally, or select one of three
   optional OpenRouter transcription models in Settings → Model.
 - **It stays out of the way.** A small preview hangs just below your text cursor, where

@@ -203,6 +203,12 @@ security find-identity -v -p codesigning
 - [ ] Cache present: lancement suivant ne retelecharge pas, passe par checking/ready.
 - [ ] Qwen actif: le HUD n'affiche pas de transcription live (normal), le texte final arrive
   apres le relachement. Parakeet actif: la preview live fonctionne toujours.
+- [ ] Parakeet actif, langue Francais (ou Automatique sur un Mac en francais): dicter 30 s de
+  francais spontane (hesitations, phrases longues, debit rapide). Ni la preview live ni le
+  texte colle ne basculent en anglais; les termes anglais isoles (commit, merge, meeting,
+  Game of Thrones) restent ecrits en anglais; latence inchangee a l'oreille.
+- [ ] Parakeet actif, langue Anglais: une phrase anglaise est transcrite en anglais normal
+  (le pilotage francais ne s'applique qu'en francais).
 - [ ] Baseline d'espace disque: ~2.3 Go pour Qwen, ~482 Mo pour Parakeet, liberes par
   `Delete`.
 

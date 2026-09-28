@@ -11,11 +11,14 @@ import Foundation
 /// French quality notes (why the code below looks the way it does):
 /// - Parakeet v3 has **no language-conditioning input**. On spontaneous
 ///   non-English speech it falls back to its English prior and can emit English
-///   words — sometimes a word-for-word translation (FluidAudio PR #630, NVIDIA
-///   discussion #14620). Passing `language: .french` is therefore not cosmetic:
-///   it activates the decoder's French-scoped English blocklist and the
-///   top-K script filter, measured to cut English intrusion from 31% to 13% on
-///   the worst spontaneous French recordings.
+///   words — often a word-for-word translation (FluidAudio PR #630, NVIDIA
+///   discussion #14620). Passing `language: .french` activates the decoder's
+///   French-scoped English blocklist and the top-K script filter, but that only
+///   swaps single tokens. French decodes therefore also run behind a steered
+///   joint (`FrenchSteering`): a mild pass, then a stronger re-decode when the
+///   first pass still reads as English. On held-out spontaneous French this
+///   takes English words from 3.5% to 0.3% of the output and WER from 28.8% to
+///   23.6% (Docs/research/french-language-drift.md).
 /// - Short and quiet clips drift more, so the utterance is trimmed to its
 ///   speech bounds and levelled before decoding (`AudioConditioner`).
 /// - Utterances over 15 s take FluidAudio's chunked path; 0.15.7 resolves the
@@ -27,10 +30,15 @@ actor FluidAudioEngine: TranscriptionEngine {
     nonisolated let displayName = "Parakeet v3"
 
     private var manager: AsrManager?
+    /// French decodes: the same models behind a mildly steered joint, and a
+    /// strongly steered one for re-decoding a pass that drifted into English.
+    private var frenchManager: AsrManager?
+    private var frenchRedecodeManager: AsrManager?
     /// Retained so streaming sessions can share the already-loaded models — a
     /// `SlidingWindowAsrManager.loadModels(_:)` with these is reference
     /// assignment only, no second download or compile.
     private var models: AsrModels?
+    private var frenchModels: AsrModels?
     private var isModelReady = false
     /// The single live streaming session; starting a new one cancels it.
     private var activeStreamingSession: FluidStreamingSession?
@@ -72,7 +80,15 @@ actor FluidAudioEngine: TranscriptionEngine {
             // stitching artifacts. Inert for the ≤15 s single-window path.
             let manager = AsrManager(config: ASRConfig(dualDecodeArbitration: true))
             try await manager.loadModels(models)
-            await self?.adopt(manager, models: models)
+            // French decodes share every loaded model and differ only in the
+            // steered joint wrapper (managers are reference holders).
+            let french = FrenchSteering.steered(models, strength: FrenchSteering.baselineStrength)
+            let frenchManager = AsrManager(config: ASRConfig(dualDecodeArbitration: true))
+            try await frenchManager.loadModels(french)
+            let redecodeManager = AsrManager(config: ASRConfig(dualDecodeArbitration: true))
+            try await redecodeManager.loadModels(
+                FrenchSteering.steered(models, strength: FrenchSteering.driftStrength))
+            await self?.adopt(manager, models: models, french: (frenchManager, redecodeManager, french))
         }
         prepareTask = task
 
@@ -89,9 +105,16 @@ actor FluidAudioEngine: TranscriptionEngine {
         progress.clear()
     }
 
-    private func adopt(_ manager: AsrManager, models: AsrModels) {
+    private func adopt(
+        _ manager: AsrManager,
+        models: AsrModels,
+        french: (manager: AsrManager, redecodeManager: AsrManager, models: AsrModels)
+    ) {
         self.manager = manager
         self.models = models
+        self.frenchManager = french.manager
+        self.frenchRedecodeManager = french.redecodeManager
+        self.frenchModels = french.models
         self.isModelReady = true
     }
 
@@ -120,8 +143,13 @@ actor FluidAudioEngine: TranscriptionEngine {
             await session.cancel()
         }
         await manager?.cleanup()
+        await frenchManager?.cleanup()
+        await frenchRedecodeManager?.cleanup()
         manager = nil
+        frenchManager = nil
+        frenchRedecodeManager = nil
         models = nil
+        frenchModels = nil
         isModelReady = false
     }
 
@@ -135,22 +163,54 @@ actor FluidAudioEngine: TranscriptionEngine {
 
         let language = Self.language(for: languageHint)
         let audio = AudioConditioner.condition(samples)
-        var result = try await transcribeOnce(audio, language: language, manager: manager)
+        let isFrench = language == .french
+        var result = try await transcribeCapture(
+            audio, original: samples, language: language,
+            manager: isFrench ? frenchManager ?? manager : manager)
+        var processingTime = result.processingTime
 
-        // The conditioner trims to the detected speech bounds. If that left
-        // nothing to decode, give the untouched capture one chance before
-        // reporting "Didn't catch that" — an over-eager trim must not lose words.
-        if result.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-           audio.count != samples.count {
-            result = try await transcribeOnce(samples, language: language, manager: manager)
+        // A pass that still reads as English is decoded again with stronger
+        // steering (2.7% of held-out utterances, ~+60 ms each).
+        if isFrench, let redecoder = frenchRedecodeManager,
+           EnglishDriftDetector.isDrifting(result.text) {
+            let redecoded = try await transcribeCapture(
+                audio, original: samples, language: language, manager: redecoder)
+            processingTime += redecoded.processingTime
+            if Self.prefersRedecode(redecoded.text, over: result.text) {
+                result = redecoded
+            }
         }
 
         return TranscriptionResult(
             text: result.text,
             confidence: result.confidence,
             audioDuration: TimeInterval(samples.count) / TimeInterval(Self.sampleRate),
-            processingTime: result.processingTime
+            processingTime: processingTime
         )
+    }
+
+    /// Decodes the conditioned capture. The conditioner trims to the detected
+    /// speech bounds; if that left nothing to decode, the untouched capture gets
+    /// one chance before "Didn't catch that" — an over-eager trim must not lose words.
+    private func transcribeCapture(
+        _ audio: [Float],
+        original: [Float],
+        language: Language?,
+        manager: AsrManager
+    ) async throws -> ASRResult {
+        let result = try await transcribeOnce(audio, language: language, manager: manager)
+        guard result.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              audio.count != original.count
+        else { return result }
+        return try await transcribeOnce(original, language: language, manager: manager)
+    }
+
+    /// The re-decode wins unless it lost the words or reads as more English.
+    /// Pure, for tests.
+    static func prefersRedecode(_ redecoded: String, over first: String) -> Bool {
+        guard !redecoded.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        return EnglishDriftDetector.englishFunctionWordCount(in: redecoded)
+            <= EnglishDriftDetector.englishFunctionWordCount(in: first)
     }
 
     /// One decode pass. A fresh decoder state per utterance — reusing one bleeds
@@ -187,6 +247,7 @@ actor FluidAudioEngine: TranscriptionEngine {
         for session: FluidStreamingSession
     ) async throws -> SlidingWindowAsrManager {
         guard let models else { throw FluidAudioEngineError.notReady }
+        let sessionModels = session.language == .french ? frenchModels ?? models : models
         if let previous = activeStreamingSession, previous !== session {
             await previous.cancel()
         }
@@ -195,7 +256,7 @@ actor FluidAudioEngine: TranscriptionEngine {
         // init and permanently finished by finish()/cancel(), so an instance can
         // never accept audio for a second utterance (reset() does not revive it).
         let manager = SlidingWindowAsrManager(config: Self.streamingConfig(language: session.language))
-        try await manager.loadModels(models)
+        try await manager.loadModels(sessionModels)
         return manager
     }
 

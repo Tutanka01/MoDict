@@ -38,6 +38,7 @@ Sources/MoDict/
 │   └── Transcription/
 │       ├── TranscriptionEngine.swift [stt] protocol + shared result/progress types
 │       ├── FluidAudioEngine.swift    [stt] FluidAudio/Parakeet implementation
+│       ├── FrenchSteering.swift      [stt] steered Parakeet joint + English drift detector
 │       ├── QwenAudioEngine.swift     [stt] speech-swift/Qwen3-ASR implementation
 │       └── OpenRouterEngine.swift    [stt] HTTPS batch transcription, in-memory WAV
 └── UI/
@@ -179,8 +180,21 @@ Implementation notes (validated against FluidAudio 0.15.7 source — README snip
 - Language mapping: `resolvedLanguageCode(for:preferredLanguages:)` — explicit hint wins;
   nil/empty/"auto" → the Mac's preferred language when Parakeet supports it, English and
   unsupported codes → nil (model detection). This is what activates the French
-  English-blocklist; `language: nil` disables it entirely. Check the real API in the
+  English-blocklist and French steering; `language: nil` disables both. Check the real API in the
   checked-out sources (`.build/checkouts/FluidAudio/Sources/FluidAudio/...`) before writing code.
+- French drift (Docs/research/french-language-drift.md): Parakeet v3 has no language prompt
+  and slides into English — often a word-for-word translation — on spontaneous French.
+  `prepare` also builds two `AsrManager`s over the **same** loaded models whose joint is a
+  `SteeredJointModel` (`FrenchSteering.steered(_:strength:)`), an `MLModel` subclass that adds
+  `strength × FrenchSteering.direction` to each `encoder_step` before the real joint. When the
+  mapped language is `.french`, `transcribe` decodes with strength 1; if the text still holds
+  English function words (`EnglishDriftDetector`), it decodes again with strength 2 and keeps
+  that result unless it is empty or reads as more English (`prefersRedecode`). French streaming
+  sessions load the strength-1 models, so the live preview is steered too. FluidAudio only calls
+  `prediction(from:options:)` on the joint; the wrapper never writes the caller's buffer
+  (FluidAudio reuses it) and passes unexpected inputs through. The direction is tied to the
+  v3 int8 encoder's output space — re-derive it (procedure in the research note) if FluidAudio
+  ships a different v3 encoder.
 - Do not let two `prepare()` calls download twice (share the in-flight Task).
 - Streaming: `prepare` retains the loaded `AsrModels`; each session gets a **fresh**
   `SlidingWindowAsrManager` sharing them (`loadModels(_:)` is reference assignment only) —
@@ -188,7 +202,8 @@ Implementation notes (validated against FluidAudio 0.15.7 source — README snip
   `finish()`/`cancel()`, so an instance can never stream a second utterance (`reset()` does
   not revive it). Cadence knob is `chunkSeconds` (the presets' `hypothesisChunkSeconds` is
   never read); MoDict uses left 10 + chunk 1 + right 1 = 12 s ≤ the model's 15 s
-  input, with `config.language` pinned from the same hint as batch (0.15.6+). Chunk ordering:
+  input, with `config.language` pinned from the same hint as batch (0.15.6+) and French
+  sessions on the steered models. Chunk ordering:
   tap thread → session-local `AsyncStream` (sync yield) → one pump
   task → actor-isolated `streamAudio`. Never a `Task {}` per chunk (unordered).
 - After load, before reporting ready, run one throwaway transcription of 1 s of silence to

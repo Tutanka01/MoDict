@@ -13,6 +13,35 @@ and publishes `MoDict-X.Y.Z.dmg` on the
 - Highlight 2
 -->
 
+## v0.9.0 — 2026-09-28
+
+Parakeet keeps your French in French: spontaneous French no longer slides into
+English, often a word-for-word translation, in the pasted text or the live preview.
+
+- **French stays French.** Parakeet v3 has no language prompt, and on spontaneous
+  French it could turn "Et ces logiciels là, historiquement…" into "These logic,
+  historically…". French decodes now run behind a steered joint: a fixed "French
+  direction", measured from the model's own encoder frames, is added to every step
+  before the model picks a word. A pass that still reads as English is decoded again
+  with stronger steering. English terms you use on purpose (git, commit, merge,
+  meeting, Game of Thrones) stay in English.
+- **Measured on 506 held-out spontaneous French utterances** (7 videos never used
+  while tuning): English words in the output 3.5% → 0.3%, utterances mostly in
+  English 4.3% → 0%, word error rate 28.8% → 23.6%. Clean read French (FLEURS) goes
+  from 7.9% to 7.7%. Median latency is unchanged; the re-decode touches about 3% of
+  utterances.
+- **The live preview benefits too**, including when Qwen3-ASR or a cloud model
+  writes the final text.
+- It applies whenever the dictation language is French, or Automatic on a Mac set to
+  French. To dictate a whole sentence in English, choose English or Automatic on an
+  English Mac. Nothing new is downloaded.
+
+Method, experiments and limits: [Docs/research/french-language-drift.md](Docs/research/french-language-drift.md).
+
+Requires macOS 15+ on Apple Silicon. Local builds keep the `MoDict Dev`
+signing identity and the `com.modict.app` bundle ID, so TCC permissions,
+models and history survive the update.
+
 ## v0.8.0 — 2026-09-24
 
 Your words, at your cursor: the HUD moves to where the text will land, every
