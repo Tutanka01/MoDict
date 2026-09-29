@@ -4,8 +4,9 @@
 
 - macOS 15+, Apple Silicon; SwiftPM with the full Xcode toolchain (16+), no `.xcodeproj`.
   App code uses Swift language mode 5; tests use mode 6 and Swift Testing.
-- Menu bar dictation: Qwen3-ASR is the local default; Parakeet supports live previews;
-  OpenRouter models are opt-in cloud transcription. No telemetry.
+- Menu bar dictation: Parakeet v3 is the local default and supports live previews;
+  Qwen3-ASR is the heavier local alternative; OpenRouter models are opt-in cloud
+  transcription. No telemetry.
 - `Package.swift` is authoritative for platform, language modes and the three direct,
   exactly pinned dependencies (FluidAudio, speech-swift, mlx-swift). Inspect checked-out
   dependency APIs before changing integration code; don't upgrade pins incidentally.

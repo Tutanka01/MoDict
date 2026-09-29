@@ -204,29 +204,44 @@ and 10–16 pt spacing keep light and dark appearances consistent.
 
 ## Onboarding (first launch)
 
-A single fixed window, 520 × 600, centered, non-resizable, hidden title bar
-(`.titlebarAppearsTransparent`, no title). Five named steps with a segmented progress line at the top,
-primary button full-width at bottom (`.borderedProminent`, `.controlSize(.large)` — tint
-`.primary` monochrome look via `.tint(.primary)`).
+A single fixed window, 520 × 640, centered, non-resizable, hidden title bar
+(`.titlebarAppearsTransparent`, no title). Five named steps with a segmented progress line at the top
+and a full-width primary button at the bottom. The button is `OnboardingPrimaryButtonStyle`:
+a solid `.primary` fill with the window background as label color (never `.borderedProminent`
+with `.tint(.primary)`, which rendered black text on a black button), 12 pt continuous corners,
+42 pt tall, a softer fill on hover and press, a quiet fill when disabled.
+
+The speech model comes second, so its download starts as early as possible and runs in the
+background while the user grants permissions. Permissions are required; the download is not
+something setup waits on.
 
 1. **Welcome** — the app glyph (the mark), “Less typing. More you.” headline, short local/cloud
    explanation, and a physical keycap with the actual gesture for the current activation mode.
    Creator attribution remains below the primary action.
-2. **Microphone** — why + button "Allow microphone" → `AVCaptureDevice.requestAccess`.
-   Card flips to granted state with checkmark automatically.
-3. **Accessibility & Input Monitoring** — two permission cards, each with status and an
-   "Open Settings" action; auto-advance polling. Copy: "To detect the right ⌘ key and type
-   text into your apps. MoDict never logs your keystrokes."
-4. **Speech model** — Qwen3-ASR 1.7B by default; local and cloud models are selectable.
-   Local models show download size and progress. Cloud selection needs a privacy confirmation,
-   persistent warning, and a SecureField for an OpenRouter key stored locally.
+2. **Speech model** — Parakeet v3 is pre-selected and badged Recommended; Qwen3-ASR 1.7B is the
+   other local choice. Rows are radio-style with the size (or “On this Mac”). Cloud models sit
+   behind “Use a cloud model instead”; picking one needs the privacy confirmation, the persistent
+   warning and a SecureField for an OpenRouter key. The primary button reads **Download and
+   continue**: it starts the download and moves on at once. A model already on disk loads and the
+   step advances by itself.
+3. **Microphone** — why + button “Allow microphone” → `AVCaptureDevice.requestAccess`.
+   If access was refused, the copy says where to switch it on and the button opens the pane.
+4. **Accessibility & Input Monitoring** — two permission cards, each with status and an
+   "Open Settings" action; the primary button opens the first missing pane; auto-advance polling.
 5. **Try it** — an automatically focused `TextEditor` with mode-aware gesture instructions.
-   Arrow keys remain available for text editing; Command-[ goes back. On first successful insertion:
-   checkmark spring animation + "That's it. MoDict lives in your menu bar."
-   Button "Start dictating" closes onboarding.
+   Command-[ goes back; the arrow keys belong to the editor. On first successful insertion:
+   checkmark spring animation + "That's it. MoDict lives in your menu bar." Button
+   "Start dictating" closes onboarding. If the model is still downloading, the step reads
+   “Almost there”, shows the progress and offers **Finish in background**.
+
+**Download dock.** On the Microphone and Access steps a strip above the button follows the model:
+checking, a determinate bar while bytes move (“Downloading Parakeet v3 · 42%”), “Preparing … for
+this Mac…”, ready, or “setup stopped” with a Retry button. The model and last steps report the same
+state in place, so it is never shown twice.
 
 Each step: SF Symbol in a 56 pt circle (`.ultraThinMaterial` fill), title, one short paragraph,
-action. Nothing else. Steps advance automatically when their condition is met.
+action. Steps advance automatically when their condition is met, except a step the user came back
+to (Back never bounces forward) or made a choice on.
 
 ## Settings
 

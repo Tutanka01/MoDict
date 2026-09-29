@@ -162,18 +162,28 @@ security find-identity -v -p codesigning
 ## Onboarding
 
 - [ ] Reset: `defaults delete com.modict.app` et resets TCC ci-dessus, puis `make run`.
-- [ ] Fenetre onboarding: 5 etapes, taille stable, pas de Dock permanent apres fermeture.
+- [ ] Fenetre onboarding: 5 etapes (Welcome, Model, Microphone, Access, Try it), 520 x 640,
+  taille stable, pas de Dock permanent apres fermeture.
+- [ ] Bouton principal lisible (texte contraste) en clair et en sombre, actif, desactive et survol.
 - [ ] Welcome: le message annonce le flux reel `hold right Cmd, speak, release`.
 - [ ] Microphone: demande systeme, refus puis re-autorisation testees.
 - [ ] Keyboard access: Accessibility et Input Monitoring sont deux cartes separees, avec
   statut qui se met a jour sans redemarrage inutile.
-- [ ] Speech model sans cache: bouton `Download model`, progression checking/downloading/
-  compiling, erreur retry si reseau coupe, pas de dictee possible tant que non pret.
+- [ ] Speech model sans cache: Parakeet v3 preselectionne (badge Recommended), bouton
+  `Download and continue` demarre le telechargement et passe a l'etape suivante sans attendre.
+- [ ] Telechargement en arriere-plan: sur Microphone et Access, le bandeau montre
+  checking/downloading N%/preparing, puis `is ready`; reseau coupe: `setup stopped` + `Retry`.
+- [ ] Try it avec modele encore en cours: `Almost there` + progression + `Finish in background`;
+  l'onboarding se ferme, la barre de menus montre le telechargement, puis `Ready`. Quitter avant
+  la fin et relancer: l'onboarding reprend a l'etape Model.
+- [ ] Retour arriere (chevron, Cmd-[, fleche gauche) sur une etape deja satisfaite: elle reste
+  affichee, pas d'auto-avance.
 - [ ] Speech model avec cache deja present: l'etape verifie/charge puis auto-avance.
 - [ ] Speech model: le picker distingue local / cloud; selection cloud demande confirmation,
   montre l'avertissement sur l'envoi audio et les couts, puis demande une cle.
 - [ ] Sans cle cloud, `Save an API key above` bloque la suite; apres enregistrement,
-  l'etape passe a `Ready` puis avance. Essayer une vraie dictee dans `Try it`.
+  l'etape passe a `Ready` et `Continue` avance (pas d'auto-avance apres un choix manuel).
+  Essayer une vraie dictee dans `Try it`.
 - [ ] Try it: le `TextEditor` recoit une vraie dictee, `onboardingCompleted=true`, puis
   l'app revient en menu-bar accessory.
 - [ ] Reouverture apres onboarding termine et permissions presentes: pas d'onboarding.
@@ -183,7 +193,7 @@ security find-identity -v -p codesigning
 ## Modeles (Qwen3-ASR / Parakeet v3)
 
 - [ ] Installation fraiche: `defaults delete com.modict.app`, caches absents, `make run`:
-  Qwen3-ASR est le modele actif par defaut dans Settings > Model et l'onboarding.
+  Parakeet v3 est le modele actif par defaut dans Settings > Model et l'onboarding.
 - [ ] Mise a niveau d'une installation existante (preferences conservees, cache Parakeet
   present): le modele actif reste Parakeet, aucun telechargement Qwen ne demarre tout seul.
 - [ ] Carte `Current model`: elle reflete le modele actif (nom, local/cloud, `Audio stays on

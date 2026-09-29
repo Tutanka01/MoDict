@@ -125,11 +125,10 @@ final class SettingsStore: ObservableObject {
            let savedModel = SpeechModel(rawValue: rawModel) {
             speechModel = savedModel
         } else {
-            // Preserve Parakeet for upgrades; only fresh installs default to Qwen.
-            let initialModel: SpeechModel = defaults.bool(forKey: "onboardingCompleted")
-                ? .parakeetV3 : .qwen3ASR1_7B
-            speechModel = initialModel
-            defaults.set(initialModel.rawValue, forKey: "speechModel")
+            // Parakeet v3 is the default for fresh installs and for upgrades that
+            // never stored a choice: the smallest download, live preview included.
+            speechModel = .parakeetV3
+            defaults.set(SpeechModel.parakeetV3.rawValue, forKey: "speechModel")
         }
         livePreview = defaults.object(forKey: "livePreview") as? Bool ?? true
         inputDeviceUID = defaults.string(forKey: "inputDeviceUID") ?? ""

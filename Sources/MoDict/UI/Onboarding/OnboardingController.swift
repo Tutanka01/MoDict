@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// Owns the onboarding window's lifecycle. The window itself is a fixed 520×600
+/// Owns the onboarding window's lifecycle. The window itself is a fixed 520×640
 /// chromeless panel; the SwiftUI `OnboardingView` inside it drives the real
 /// permission/model/dictation actions. While onboarding is on screen the app runs
 /// as a regular (Dock + menu) application so the window can take focus for the
@@ -26,6 +26,12 @@ final class OnboardingController {
         !settings.onboardingCompleted || (!settings.speechModel.isCloud && !settings.speechModel.isDownloaded)
     }
 
+    /// Where the flow opens. Setup reopened only because the model is missing
+    /// (everything else was completed before) resumes at the model step.
+    static func startingStep(settings: SettingsStore) -> OnboardingStep {
+        settings.onboardingCompleted ? .model : .welcome
+    }
+
     func present() {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
@@ -35,7 +41,7 @@ final class OnboardingController {
             return
         }
 
-        let size = NSSize(width: 520, height: 600)
+        let size = NSSize(width: OnboardingView.windowSize.width, height: OnboardingView.windowSize.height)
         let window = NSWindow(
             contentRect: NSRect(origin: .zero, size: size),
             styleMask: [.titled, .fullSizeContentView],
@@ -53,7 +59,7 @@ final class OnboardingController {
         window.standardWindowButton(.miniaturizeButton)?.isHidden = true
         window.standardWindowButton(.zoomButton)?.isHidden = true
 
-        let root = OnboardingView(app: app) { [weak self] in
+        let root = OnboardingView(app: app, startingAt: Self.startingStep(settings: app.settings)) { [weak self] in
             self?.finish()
         }
         window.contentView = NSHostingView(rootView: root)

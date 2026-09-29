@@ -8,8 +8,8 @@ local or OpenRouter model transcribes → text is inserted at the cursor of what
   `make` assembles the `.app` bundle, embeds `Cmlx.framework` and the
   `disable-library-validation` entitlement, and `make verify-bundle` proves the
   result launches.
-- STT: Qwen3-ASR 1.7B 4-bit through speech-swift/MLX (new-install default), or
-  FluidAudio 0.15.7 with Parakeet-TDT 0.6B v3 (smaller, ANE, live preview), or
+- STT: FluidAudio 0.15.7 with Parakeet-TDT 0.6B v3 (new-install default: smaller, ANE,
+  live preview), or Qwen3-ASR 1.7B 4-bit through speech-swift/MLX, or
   one of three opt-in OpenRouter speech models (batch only).
 - No sandbox (CGEvent posting + global key monitoring are incompatible with it).
 
@@ -54,8 +54,10 @@ Sources/MoDict/
     ├── MenuBar/
     │   └── MenuBarView.swift     [menubar] popover content (status, history, usage, footer)
     ├── Onboarding/
-    │   ├── OnboardingController.swift [onboarding] window lifecycle
-    │   └── OnboardingView.swift       [onboarding] 5 steps (see DESIGN.md)
+    │   ├── OnboardingController.swift [onboarding] window lifecycle, starting step
+    │   ├── OnboardingFlow.swift       [onboarding] steps, readiness gating, model status copy (pure, tested)
+    │   ├── OnboardingSteps.swift      [onboarding] step bodies, background download dock
+    │   └── OnboardingView.swift       [onboarding] chrome, primary action, advance/auto-advance
     └── Settings/
         └── SettingsView.swift    [settings] sidebar: General / Dictation / Vocabulary / Model / Appearance / Usage / About
 ```
@@ -215,8 +217,8 @@ Implementation notes (validated against FluidAudio 0.15.7 source — README snip
 ```swift
 /// The models exposed in Settings. Raw values are persisted in UserDefaults — stable.
 enum SpeechModel: String, CaseIterable, Identifiable, Sendable {
-    case qwen3ASR1_7B = "qwen3-asr-1.7b-4bit"   // fresh-install default
-    case parakeetV3   = "parakeet-v3"           // keeps upgrading installs unchanged
+    case qwen3ASR1_7B = "qwen3-asr-1.7b-4bit"
+    case parakeetV3   = "parakeet-v3"           // default for fresh installs and upgrades
     case maiTranscribe2 = "microsoft/mai-transcribe-2"
     case museVoiceTranscribe = "meta/muse-voice-transcribe-1.0"
     case gptTranscribe = "openai/gpt-transcribe"
@@ -228,8 +230,9 @@ enum SpeechModel: String, CaseIterable, Identifiable, Sendable {
 }
 ```
 
-`SettingsStore.speechModel` resolves to `.parakeetV3` when `onboardingCompleted` is already
-true (an upgrade must not silently pull ~2.3 GB) and to `.qwen3ASR1_7B` otherwise.
+`SettingsStore.speechModel` resolves to the stored choice, or `.parakeetV3` when none was
+stored (fresh install, or an upgrade that never picked one, which must not silently pull
+~2.3 GB).
 
 ### QwenAudioEngine [stt] — `QwenAudioEngine.swift`
 
@@ -550,7 +553,18 @@ preview never crosses into the notch band. All visuals per Docs/DESIGN.md.
 }
 ```
 The view drives real actions: `Permissions.*`, `app.controller.prepareEngine()`, and the
-"Try it" step observes `app.controller.phase`/insertions to auto-advance. On finish it sets
+`OnboardingController.startingStep(settings:)` opens at Welcome, or at the model step when
+setup only reopens because the model is missing.
+
+"Try it" step observes `app.controller.phase`/insertions. Gating lives in the pure
+`OnboardingReadiness` (`OnboardingFlow.swift`): the model must be *underway* (ready or
+downloading) to leave the model step, finish setup, or open "Try it"; it must be *ready* for
+the trial dictation. The download therefore runs behind the permission steps
+(`DictationController.downloadModel` reports `.downloading(.checking)` immediately, so the
+background dock has something to show at once). Steps self-advance when their condition
+becomes true, except one the user came back to or chose something on. Finishing while the
+download is still running is allowed: the download continues, the menu bar shows it, and a
+relaunch before it ends reopens setup at the model step. On finish the view sets
 `settings.onboardingCompleted = true` and calls `app.controller.activate()`.
 
 ## Core pieces (owner: core — already written, read them before implementing)

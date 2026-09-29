@@ -17,10 +17,12 @@ superwhisper, built to disappear until you need it.
 
 - **Private by default.** The local models transcribe on your Mac. Selecting a cloud
   model sends each finished recording to OpenRouter and its model provider.
-- **French-first by default.** New installations use Qwen3-ASR 1.7B locally through
-  MLX for stronger multilingual and French transcription. Parakeet v3 remains available
-  as a smaller, faster Neural Engine model with live preview, steered so spontaneous
-  French no longer slides into English.
+- **Fast and French-ready by default.** New installations use Parakeet v3 on the Neural
+  Engine: a small download, live preview, and steering so spontaneous French no longer
+  slides into English. Qwen3-ASR 1.7B (MLX) stays one click away for the strongest
+  multilingual and French transcription.
+- **Setup that doesn't wait.** The model downloads in the background while you grant
+  permissions, and you can finish setup before the download ends.
 - **Choose your model.** Manage Qwen3-ASR and Parakeet locally, or select one of three
   optional OpenRouter transcription models in Settings → Model.
 - **It stays out of the way.** A small preview hangs just below your text cursor, where
@@ -31,7 +33,7 @@ superwhisper, built to disappear until you need it.
 
 - macOS 15 (Sequoia) or later
 - Apple Silicon
-- ~2.3 GB of disk for the default Qwen3-ASR model (~482 MB for Parakeet)
+- ~482 MB of disk for the default Parakeet v3 model (~2.3 GB for Qwen3-ASR)
 
 ## Install
 

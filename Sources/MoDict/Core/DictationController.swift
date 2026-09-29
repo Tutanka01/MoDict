@@ -335,12 +335,10 @@ final class DictationController: ObservableObject {
         }
         let engine = engine(for: model)
         isManagingModel = true
-        setModelState(
-            (model.isCloud || model.isDownloaded)
-                ? .downloading(ModelDownloadProgress(phase: .checking, fraction: 0))
-                : .needsDownload,
-            for: model
-        )
+        // Report "checking" at once, even before the first byte: the caller just
+        // asked for a download, and a still-`.needsDownload` state would read as
+        // if nothing happened until the first progress callback lands.
+        setModelState(.downloading(ModelDownloadProgress(phase: .checking, fraction: 0)), for: model)
         Task { [weak self] in
             guard let self else { return }
             do {
