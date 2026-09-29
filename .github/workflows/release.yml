@@ -70,6 +70,6 @@ jobs:
                ```
 
             4. Launch MoDict — onboarding walks you through permissions and the
-               one-time speech-model download (~2.3 GB by default).
+               one-time speech-model download (~480 MB by default).
 
             Requires macOS 15+ on Apple Silicon.

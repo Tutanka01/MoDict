@@ -13,6 +13,35 @@ and publishes `MoDict-X.Y.Z.dmg` on the
 - Highlight 2
 -->
 
+## v0.10.0 — 2026-09-29
+
+A setup that doesn't make you wait: the speech model downloads in the background
+while you grant permissions, Parakeet v3 is the default, and the button you were
+meant to press is readable again.
+
+- **Download in the background.** The speech model is now the second step, and
+  "Download and continue" starts the download and moves on. A progress strip follows
+  you through Microphone and Access (checking, a real percentage, "ready", or a Retry
+  button if the network drops). If the model is still arriving when you reach "Try it",
+  choose **Finish in background**: MoDict shows the download in the menu bar and is
+  ready as soon as it completes. Quit before it ends and setup reopens at the model
+  step.
+- **Parakeet v3 by default.** New installs download about 480 MB instead of 2.3 GB
+  and get the live preview right away. Qwen3-ASR 1.7B is one click away in setup and
+  in Settings → Model; cloud models sit behind "Use a cloud model instead". Existing
+  installs keep the model they already use.
+- **A readable primary button.** On the welcome step the button rendered as a black
+  bar with black text. It is now drawn with explicit colors, in light and dark.
+- **Smaller fixes.** Going back to a step you already completed no longer bounces you
+  forward; the Access button opens the first missing permission pane; a refused
+  microphone says where to switch it back on; the arrow keys can no longer end setup
+  from the "Try it" editor; and pressing Download anywhere now reads "Checking…"
+  immediately instead of "Not downloaded" until the first byte.
+
+Requires macOS 15+ on Apple Silicon. Local builds keep the `MoDict Dev`
+signing identity and the `com.modict.app` bundle ID, so TCC permissions,
+models and history survive the update.
+
 ## v0.9.0 — 2026-09-28
 
 Parakeet keeps your French in French: spontaneous French no longer slides into
