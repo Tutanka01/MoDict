@@ -13,6 +13,42 @@ and publishes `MoDict-X.Y.Z.dmg` on the
 - Highlight 2
 -->
 
+## v0.11.0 — 2026-10-01
+
+The live preview stays on its rails: no rewrapping, no sideways jolt, no
+caret pulling words around, and the final text no longer blurs the whole
+caption away.
+
+- **Lines never rewrap.** The caption now breaks its own lines (`HUDLineBreaker`,
+  CoreText at the card's text column width) and writes the breaks into the text,
+  so `Text` never wraps anything itself. Greedy breaking is memoryless at a line
+  start, so words arriving can only append new lines — never reshuffle the old
+  ones — and whole lines can be dropped from the top without moving a visible
+  word.
+- **The glide is on the display clock** (`HUDCaptionMotion`): line growth and
+  scroll are critically damped springs integrated per frame, with an absolute
+  scroll position so a partial arriving mid-glide only moves the target. An
+  animated SwiftUI transaction around state the text depended on was what made
+  the whole caption jolt sideways for a frame at every glide.
+- **The cursor is drawn, not laid out**: it sits one space after the last
+  visible glyph (or at the first glyph while nothing has landed) instead of
+  being a placeholder glued to the last word — which made that word hop to the
+  next line and back as words arrived.
+- **The final text keeps the preview's ink.** Stamps now match every word the
+  new text shares with the old one (a diff, not just the common prefix): after
+  a long dictation, only the words that really changed (a capital, a comma)
+  condense again instead of the whole caption blanking.
+- Only the lines still visible are laid out, cut at a line start, so a minute-long
+  dictation neither costs more nor rewraps; a word the recognizer revised is new
+  ink whole, never half a word.
+
+Method and behavior are pinned by tests in `InterfaceStateTests` (line breaking,
+memoryless layout from any line start, per-word re-inking).
+
+Requires macOS 15+ on Apple Silicon. Local builds keep the `MoDict Dev`
+signing identity and the `com.modict.app` bundle ID, so TCC permissions,
+models and history survive the update.
+
 ## v0.10.0 — 2026-09-29
 
 A setup that doesn't make you wait: the speech model downloads in the background
