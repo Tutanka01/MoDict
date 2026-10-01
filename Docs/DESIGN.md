@@ -144,21 +144,33 @@ Two messages never overlap mid-morph.
   no-break space. Confirmed text is `primary 0.95`; the volatile tail is `0.5`, the monochrome
   translation of Apple's provisional-dictation underline, and brightens (0.35 s) when confirmed.
 - `HUDInk` stamps each character when it appears and when it is confirmed. A new partial keeps
-  the stamps of the unchanged prefix; everything after the first difference is new ink. So new
-  words condense out of a blur (5 pt → 0, rising 3.5 pt, 0.5 s per glyph, 18 ms stagger, a
-  whole batch within 0.45 s), and a word the recognizer revises visibly rewrites itself.
-- The cursor rides the ink front: while glyphs are still arriving it sits one space after the
-  last visible glyph, so the words appear typed by your voice instead of the cursor leaping
-  ahead of them.
+  the stamps of every word it shares with the old text, wherever it sits (a diff, not just the
+  common prefix); a word the recognizer touched is new ink from its first letter to its last.
+  So new words condense out of a blur (5 pt → 0, rising 3.5 pt, 0.5 s per glyph, 18 ms stagger,
+  a whole batch within 0.45 s), a revised word visibly rewrites itself, and when the final text
+  replaces the preview at release only what really changed (a capital, a comma) condenses again:
+  the caption never blanks.
+- The cursor rides the ink front: it sits one space after the last visible glyph (or at the first
+  glyph while nothing has landed), so the words appear typed by your voice instead of the cursor
+  leaping ahead of them. It is drawn, not laid out: a placeholder glued to the last word made
+  that word hop to the next line and back as the words arrived.
 - All of this is drawing only (`HUDCaptionRenderer`, a `TextRenderer` reading custom text
-  attributes): each partial is still one deterministic layout pass, and interpolating a live
-  caption's layout is what made earlier previews swim.
-- The card grows line by line up to three lines (critically damped spring). Beyond three, the
-  text is top-pinned and offset by its measured overflow, so each new line glides the older
-  ones up through a top fade that eases in at the first overflow. There is no ScrollView and no
-  scroll position; a partial arriving mid-glide simply retargets the spring.
-- Only the recent tail (~220 chars, cut on a word boundary) is laid out, so cost stays flat on
-  long dictations. Stamps older than 1.2 s collapse so settled text renders as a few runs.
+  attributes): interpolating a live caption's layout is what made earlier previews swim.
+- The caption breaks its own lines (`HUDLineBreaker`: CoreText, one fixed width, 2 pt narrower
+  than the text column) and writes the breaks into the text, so `Text` never wraps anything
+  itself. Greedy breaking is memoryless at a line start, so lines never rewrap as words arrive
+  and whole lines can be dropped from the top without moving a visible word. Tests pin both.
+- The card grows line by line up to three lines, then each new line glides the older ones up
+  through a top fade that grows with the scroll. Both motions are critically damped springs
+  integrated on the display clock (`HUDCaptionMotion`; scroll response 0.62 s, about 0.4 s to
+  cover 90% of a line, growth 0.45 s), not SwiftUI animations: an animated transaction around
+  state the text depends on made the whole text jolt sideways for a frame at every glide. The
+  scroll position is absolute (lines since the dictation began), so a partial arriving
+  mid-glide only moves the target and velocity carries on; trimming the laid-out text changes
+  nothing on screen. There is no ScrollView and no measurement: the line count is known
+  before drawing.
+- Only the lines that can still be seen are laid out (cut at a line start), so cost stays flat
+  on long dictations. Stamps older than 1.2 s collapse so settled text renders as a few runs.
 - Choreography: key-down → capsule appears at the text cursor → first words grow it into the
   card, the cursor moves into the text → words condense as they are heard → release/stop →
   waveform ripples, words shimmer → canonical text settles, rewriting what changed → one paste →
@@ -170,6 +182,7 @@ Two messages never overlap mid-morph.
 - Disappear: opacity + scale to 0.90 toward the pinned edge over 0.18 s ease-out.
 - Shape changes between states (capsule ↔ card) animate with the same spring; the one-time
   growth for the preview uses a fully damped spring so the caption baseline never overshoots.
+  The caption's own growth and glide are the springs of `HUDCaptionMotion` (above).
 - Error state does a ±4 pt horizontal shake, twice, 0.05 s each.
 - Cost: the waveform redraws on the display clock and the caption at 60 Hz, both as `Canvas` /
   renderer draws with no layout pass; a full scripted dictation measures ~20% of one core,

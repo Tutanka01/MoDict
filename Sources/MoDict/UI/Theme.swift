@@ -43,8 +43,13 @@ enum Theme {
         let font = NSFont.systemFont(ofSize: hudPreviewFontSize)
         return ceil(font.ascender - font.descender + font.leading)
     }()
-    /// The caption grows one line at a time up to three lines, then glides.
-    static let hudPreviewHeight: CGFloat = hudPreviewLineHeight * 3 + hudPreviewLineSpacing * 2
+    /// One line to the next: the unit the caption scrolls by.
+    static let hudPreviewLinePitch: CGFloat = hudPreviewLineHeight + hudPreviewLineSpacing
+    /// The caption grows one line at a time up to this many lines, then glides.
+    static let hudPreviewMaxLines = 3
+    /// The width the caption breaks its own lines at: the card's text column
+    /// (both insets) less a margin, so `Text` never soft-wraps a line already broken.
+    static let hudCaptionWrapWidth: CGFloat = hudSessionWidth - 2 * hudHorizontalPadding - 2
     /// Distance from the pointer to the center of a near-pointer card (the
     /// fallback when the focused app reports no text cursor).
     static let hudPointerCenterOffset: CGFloat = 78
@@ -77,9 +82,6 @@ enum Theme {
     /// interpolating a live caption is what makes it swim; new words animate
     /// in the renderer instead (drawing only).
     static let textSpring = Animation.spring(response: 0.4, dampingFraction: 0.9)
-    /// Line growth and the glide as a new line wraps: critically damped, so a
-    /// partial arriving mid-glide just retargets it.
-    static let captionSpring = Animation.spring(response: 0.36, dampingFraction: 1)
     /// The success check drawing itself.
     static let checkSpring = Animation.spring(response: 0.42, dampingFraction: 0.82)
     static let disappearDuration: TimeInterval = 0.18

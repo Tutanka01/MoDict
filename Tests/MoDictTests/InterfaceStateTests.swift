@@ -288,11 +288,11 @@ struct InterfaceStateTests {
         #expect(ink.stamps.dropFirst(7).allSatisfy { $0 == HUDInk.Stamp(born: 10.5, lit: nil) })
         #expect(ink.lastChange == 10.5)
 
-        // A revision re-stamps from the first differing character only.
+        // A revision re-stamps the whole revised word, and only that word.
         ink.update(partial("Bonjour à", "tout"), at: 11)
         #expect(ink.text == "Bonjour à tout")
-        #expect(ink.stamps[12].born == 10.5)
-        #expect(ink.stamps[13] == HUDInk.Stamp(born: 11, lit: nil))
+        #expect(ink.stamps.prefix(7).allSatisfy { $0.born == 10 })
+        #expect(ink.stamps[10...13].allSatisfy { $0 == HUDInk.Stamp(born: 11, lit: nil) })
         #expect(ink.stamps[8].lit == 11)               // "à" just confirmed
 
         // Long-finished entrances collapse to 0 so settled text is one run;
@@ -312,17 +312,127 @@ struct InterfaceStateTests {
         #expect(ink.isEmpty && ink.segments().isEmpty)
     }
 
-    /// Only the recent tail is laid out, cut on a word boundary.
+    /// The final text often differs from the preview at its very start (a comma,
+    /// a capital). Words that did not change keep their stamps, so only the
+    /// touched words condense again instead of the whole caption blurring away.
     @Test
-    func inkTailIsBoundedAndCutOnAWord() {
+    func inkKeepsUnchangedWordsWhenTheFinalTextChangesTheStart() {
         var ink = HUDInk()
-        let words = (1...80).map { "word\($0)" }.joined(separator: " ")
+        ink.update(PartialTranscript(confirmedText: "Bonjour à tous, la réunion est déplacée", volatileText: ""), at: 1)
+        ink.update(PartialTranscript(confirmedText: "Bonjour à tous, la réunion est déplacée", volatileText: ""), at: 20)
+        #expect(ink.stamps.allSatisfy { $0.born == 0 })
+
+        ink.update(PartialTranscript(confirmedText: "Bonjour à tous ! La réunion est déplacée.", volatileText: ""), at: 21)
+        let text = Array(ink.text)
+        func stamps(of word: String) -> [HUDInk.Stamp] {
+            let start = ink.text.range(of: word)!.lowerBound
+            let offset = ink.text.distance(from: ink.text.startIndex, to: start)
+            return Array(ink.stamps[offset..<(offset + word.count)])
+        }
+        #expect(text.count == ink.stamps.count)
+        // Untouched words keep their long-settled stamps…
+        for word in ["Bonjour", "tous", "réunion", "est"] {
+            #expect(stamps(of: word).allSatisfy { $0.born == 0 }, "\(word) must not condense again")
+        }
+        // …a word whose letter changed (the capital) condenses whole, and new
+        // punctuation condenses alone, without re-inking the word beside it.
+        #expect(stamps(of: "La").allSatisfy { $0.born == 21 })
+        #expect(stamps(of: "déplacée").allSatisfy { $0.born == 0 })
+        #expect(stamps(of: ".").allSatisfy { $0.born == 21 })
+        #expect(stamps(of: "!").allSatisfy { $0.born == 21 })
+    }
+
+    /// The caption breaks its own lines, and the cursor takes no part in it.
+    /// Adding words never moves a line start; it can only append new ones.
+    @Test
+    func captionLinesNeverRewrapAsWordsArrive() {
+        let words = (1...90).map { "mot\($0 % 7 == 0 ? "exceptionnel" : "")\($0)" }
+        var previous = [0]
+        for count in 1...words.count {
+            let characters = Array(words.prefix(count).joined(separator: " "))
+            let starts = HUDLineBreaker.lineStarts(of: characters)
+            #expect(starts.first == 0)
+            #expect(zip(starts, starts.dropFirst()).allSatisfy { $0 < $1 })
+            #expect(starts.starts(with: previous),
+                    "no line start may move when word \(count) arrives")
+            previous = starts
+        }
+        #expect(previous.count > 5)
+    }
+
+    /// The property the invisible trim relies on: laying out the text from any
+    /// line start gives the same lines as laying out the whole of it.
+    @Test
+    func captionLinesAreTheSameFromAnyLineStart() {
+        let words = (1...120).map { "parole\($0 % 5 == 0 ? "extraordinaire" : "")\($0)" }
+        let characters = Array(words.joined(separator: " "))
+        let starts = HUDLineBreaker.lineStarts(of: characters)
+        #expect(starts.count > 8)
+        for (line, start) in starts.enumerated() {
+            let tail = Array(characters[start...])
+            let expected = starts.dropFirst(line).map { $0 - start }
+            #expect(HUDLineBreaker.lineStarts(of: tail) == expected, "from line \(line)")
+        }
+    }
+
+    /// The laid-out window carries the breaks in its text: one per line start,
+    /// the words intact, and dropping lines from the top leaves the rest as is.
+    @Test
+    func captionWindowWritesItsLineBreaksIntoTheText() {
+        var ink = HUDInk()
+        let words = (1...60).map { "mot\($0)" }.joined(separator: " ")
         ink.update(PartialTranscript(confirmedText: words, volatileText: ""), at: 1)
-        let tail = ink.segments(limit: 60).map(\.text).joined()
-        #expect(tail.count <= 60)
-        #expect(tail.hasSuffix("word80"))
-        #expect(tail.hasPrefix("word"))
-        #expect(words.hasSuffix(tail))
+        let lines = ink.lineStarts.count
+        #expect(lines > 4)
+
+        let whole = ink.segments().map(\.text).joined()
+        #expect(whole.split(separator: "\n").count == lines)
+        #expect(whole.split(whereSeparator: \.isWhitespace).joined(separator: " ") == words)
+
+        let from = 3
+        let window = ink.segments(fromLine: from).map(\.text).joined()
+        #expect(whole.split(separator: "\n", omittingEmptySubsequences: false)
+            .dropFirst(from).joined(separator: "\n") == window)
+        // Out of range clamps to the last line.
+        #expect(ink.segments(fromLine: 999).map(\.text).joined() == window.split(separator: "\n").last.map(String.init))
+    }
+
+    /// The caption's springs never overshoot from rest, keep their velocity
+    /// when the target moves mid-glide, and jump straight to a target when
+    /// motion is reduced.
+    @Test
+    func captionMotionGlidesWithoutOvershootOrRestart() {
+        let motion = HUDCaptionMotion()
+        motion.prime(scroll: 0, lines: 3)
+        var time: TimeInterval = 100
+        motion.advance(scroll: 1, lines: 3, at: time, animated: true)
+        var previous: CGFloat = 0
+        var peak: CGFloat = 0
+        for frame in 1...60 {
+            time += 1.0 / 60
+            motion.advance(scroll: 1, lines: 3, at: time, animated: true)
+            #expect(motion.scroll >= previous, "monotonic at frame \(frame)")
+            #expect(motion.scroll <= 1.0001, "no overshoot at frame \(frame)")
+            peak = max(peak, motion.scroll - previous)
+            previous = motion.scroll
+            if frame == 12 { #expect(motion.scroll > 0.3 && motion.scroll < 0.85) }   // soft: ~0.2 s in
+        }
+        #expect(motion.scroll > 0.99)
+        // Soft: no frame covers more than ~a tenth of the line at 60 fps.
+        #expect(peak < 0.1)
+
+        // A second line arrives mid-glide: the motion carries on, no restart.
+        motion.prime(scroll: 0, lines: 3)
+        motion.advance(scroll: 1, lines: 3, at: 200, animated: true)
+        for step in 1...15 { motion.advance(scroll: 1, lines: 3, at: 200 + Double(step) / 60, animated: true) }
+        let midway = motion.scroll
+        motion.advance(scroll: 2, lines: 3, at: 200 + 16.0 / 60, animated: true)
+        #expect(motion.scroll >= midway)
+        #expect(motion.scroll - midway < 0.1)
+
+        // Reduce Motion: straight to the target.
+        motion.advance(scroll: 5, lines: 2, at: 300, animated: false)
+        #expect(motion.scroll == 5 && motion.lines == 2)
     }
 
     /// The preview never leaks into the next session.

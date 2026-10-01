@@ -50,6 +50,7 @@ Sources/MoDict/
     │   ├── HUDView.swift         [hud]     SwiftUI model, smoked-glass capsule/card morph, states
     │   ├── HUDVoicePrint.swift   [hud]     the living mark: voice waveform + blinking cursor
     │   ├── HUDCaption.swift      [hud]     preview ink stamps + TextRenderer (entrance, caret, sweep)
+    │   ├── HUDCaptionLayout.swift [hud]    caption line breaking + growth/scroll springs (display clock)
     │   └── TextCaretLocator.swift [hud]    read-only AX lookup of the text cursor
     ├── MenuBar/
     │   └── MenuBarView.swift     [menubar] popover content (status, history, usage, footer)
@@ -552,10 +553,10 @@ preview never crosses into the notch band. All visuals per Docs/DESIGN.md.
     func present()   // activates app (.regular policy), shows window, restores .accessory on close
 }
 ```
-The view drives real actions: `Permissions.*`, `app.controller.prepareEngine()`, and the
 `OnboardingController.startingStep(settings:)` opens at Welcome, or at the model step when
 setup only reopens because the model is missing.
 
+The view drives real actions: `Permissions.*`, `app.controller.prepareEngine()`, and the
 "Try it" step observes `app.controller.phase`/insertions. Gating lives in the pure
 `OnboardingReadiness` (`OnboardingFlow.swift`): the model must be *underway* (ready or
 downloading) to leave the model step, finish setup, or open "Try it"; it must be *ready* for
