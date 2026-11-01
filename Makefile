@@ -102,7 +102,7 @@ VERIFY_BUNDLE := scripts/verify-bundle.sh
 ALLOW_ADHOC ?= 1
 REQUIRE_DEVELOPER_ID ?= 0
 
-.PHONY: all build test universal icon bundle sign sign-adhoc verify-bundle diagnose-signature validate-release validate-notarized-release developer-id notarize dmg run clean
+.PHONY: all build test check universal icon bundle sign sign-adhoc verify-bundle diagnose-signature validate-release validate-notarized-release developer-id notarize dmg run clean
 .DEFAULT_GOAL := all
 
 all: sign
@@ -122,6 +122,10 @@ test:
 		echo "warning: (no xctest host, no SwiftUI macros)." && \
 		echo "warning: they run for real in CI (macos-26) or locally with Xcode installed."; \
 	fi
+
+# Fails when no test actually ran, unlike the compile-only fallback above.
+check:
+	scripts/check
 
 universal:
 	$(MAKE) sign SWIFT_FLAGS="--arch arm64 --arch x86_64" BINARY=$(UNIVERSAL_BIN)
@@ -159,6 +163,7 @@ bundle: build icon
 	    "$(PLIST_IN)" > "$(CONTENTS)/Info.plist"
 	printf 'APPL????' > "$(CONTENTS)/PkgInfo"
 	cp "$(ICNS)" "$(CONTENTS)/Resources/AppIcon.icns"
+	cp -R Support/Models/*.mlmodelc "$(CONTENTS)/Resources/"
 	@# The layered icon needs an actool that reads Icon Composer's .icon (Xcode
 	@# 26+). It also renders a matching AppIcon.icns for macOS 15. Any failure
 	@# keeps the flat icon above, so older toolchains still bundle a valid app.
@@ -304,6 +309,8 @@ dmg:
 # races TCC on freshly signed builds and can strip the permission grant; a direct
 # exec keeps the stable signing identity's authorizations intact.
 run: sign
+	@# One copy at a time: a second one exits at once, leaving the old binary running.
+	@pkill -x "$(APP_NAME)" || true
 	@echo "Launching $(APP_NAME) (Ctrl-C to quit)"
 	"$(CONTENTS)/MacOS/$(APP_NAME)"
 

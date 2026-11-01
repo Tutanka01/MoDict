@@ -27,10 +27,22 @@ Sources/MoDict/
 │   ├── SettingsStore.swift       [core]    user preferences (UserDefaults-backed)
 │   ├── OpenRouterKeyStore.swift  [core]    OpenRouter API key in a 0600 file
 │   ├── Permissions.swift         [core]    mic / accessibility / input-monitoring helpers
-│   ├── HotkeyMonitor.swift       [hotkey]  configurable-key CGEventTap (press/release/cancel)
-│   ├── MicrophoneCapture.swift   [audio]   AVAudioEngine → 16 kHz mono Float samples
+│   ├── HotkeyMonitor.swift       [hotkey]  main-actor façade, `DictationKey`
+│   ├── HotkeyGestureMachine.swift [hotkey] pure gesture rules (tested with constructed inputs)
+│   ├── HotkeyEventTaps.swift     [hotkey]  tap thread, session + HID taps, health, App Nap
+│   ├── SyntheticEvents.swift     [hotkey]  marks MoDict's own posted keys
+│   ├── MicrophoneCapture.swift   [audio]   AVAudioEngine → 16 kHz mono Float samples, off main
+│   ├── InputRoute.swift          [audio]   pure choice of the input device
+│   ├── Deadline.swift            [core]    timeout that does not wait for the work
+│   ├── IdleSleepGuard.swift      [core]    no idle sleep while a dictation is live
+│   ├── InstanceLock.swift        [core]    one running copy per user
+│   ├── Diagnostics.swift         [core]    os.Logger, one numbers-only line per dictation
+│   ├── TranscriptionBenchmark.swift [core] hidden developer mode (Docs/research/transcription-benchmark.md)
 │   ├── SoundFeedback.swift       [audio]   start/success/error sounds + haptics
-│   ├── TextInserter.swift        [insert]  clipboard + synthetic ⌘V, restore, secure-input
+│   ├── TextInserter.swift        [insert]  clipboard + synthetic ⌘V, secure-input
+│   ├── PasteClipboard.swift      [insert]  pasteboard write, snapshot, scheduled restore
+│   ├── PasteKeyResolver.swift    [insert]  which key is V on the active layout
+│   ├── SmartSpacing.swift        [insert]  when dictated text needs a leading space
 │   ├── HistoryStore.swift        [menubar] recent transcriptions (in-memory)
 │   ├── VocabularyStore.swift     [vocabulary] user text replacements (UserDefaults JSON)
 │   ├── UsageLedger.swift         [usage]   JSONL cost/usage ledger + aggregates + USD format
@@ -39,6 +51,8 @@ Sources/MoDict/
 │       ├── TranscriptionEngine.swift [stt] protocol + shared result/progress types
 │       ├── FluidAudioEngine.swift    [stt] FluidAudio/Parakeet implementation
 │       ├── FrenchSteering.swift      [stt] steered Parakeet joint + English drift detector
+│       ├── FrenchSteeringGuard.swift [stt] encoder fingerprint: steering only on its own encoder
+│       ├── SpeechGate.swift          [stt] drops captures without speech before any engine
 │       ├── QwenAudioEngine.swift     [stt] speech-swift/Qwen3-ASR implementation
 │       └── OpenRouterEngine.swift    [stt] HTTPS batch transcription, in-memory WAV
 └── UI/
@@ -80,8 +94,15 @@ Root-level (owner **packaging**): `Makefile`, `Support/Info.plist.in`,
 
 Robustness rules (all implemented in `DictationController`, don't duplicate):
 - Each recording gets a `UUID`; async completions compare it and drop stale results.
-- Recordings shorter than 0.35 s are cancelled silently (accidental taps).
-- Empty transcription → transient "Didn't catch that." HUD, nothing inserted.
+- Holds shorter than 0.35 s, on the physical press and release, are cancelled silently
+  (accidental taps). Otherwise capture continues 0.2 s past the release; phase and HUD change at
+  the release itself, and the timeout starts after that tail.
+- No audio under 0.3 s (Parakeet's minimum), no speech (`SpeechGate`), or an empty transcription →
+  transient "Didn't catch that." HUD, nothing inserted. A capture that died of a microphone failure
+  shows that failure instead.
+- Esc stays active through the tail, the gate and insertion, until the first paste event is posted.
+- A sleep or a session switch cancels a recording; a transcription already running finishes.
+- `phase != .idle` holds an idle-sleep assertion, which lapses after 15 minutes.
 - The HUD must appear on key-down and always disappear — every code path ends with
   `hud.hide()` or a transient state that schedules it.
 
@@ -172,9 +193,10 @@ actor FluidAudioEngine: TranscriptionEngine {
 
 Implementation notes (validated against FluidAudio 0.15.7 source — README snippets are WRONG):
 - `AsrModels.downloadAndLoad(version: .v3, progressHandler:)` →
-  `AsrManager(config: ASRConfig(dualDecodeArbitration: true))`, `try await asr.loadModels(models)`.
+  `AsrManager(config: ASRConfig())`, `try await asr.loadModels(models)`.
   v3 long-form already resolves to the no-mel, silence-aligned path by default in 0.15.7
-  (issue #594); the arbitration flag only affects utterances over 15 s.
+  (issue #594). Dual-decode arbitration stays off: on real French it costs 2.5 WER points and
+  three times the latency (Docs/research/long-dictation-arbitration.md).
 - `transcribe`: condition the capture first (`AudioConditioner` trims to speech bounds and
   lifts quiet audio; never append digital silence — NVIDIA NeMo #15757), then create a
   **fresh** `TdtDecoderState` per utterance (`try TdtDecoderState()`) and call
@@ -197,7 +219,10 @@ Implementation notes (validated against FluidAudio 0.15.7 source — README snip
   `prediction(from:options:)` on the joint; the wrapper never writes the caller's buffer
   (FluidAudio reuses it) and passes unexpected inputs through. The direction is tied to the
   v3 int8 encoder's output space — re-derive it (procedure in the research note) if FluidAudio
-  ships a different v3 encoder.
+  ships a different v3 encoder. Downloads follow `resolve/main` with no pinned revision, so
+  `prepare` fingerprints the encoder on disk (`FrenchSteeringGuard`, under 100 ms) and skips the
+  steered managers on a mismatch, with a warning. To update: re-derive the direction, run
+  `swift test --filter theCachedParakeet`, copy the printed value. Never the constant alone.
 - Do not let two `prepare()` calls download twice (share the in-flight Task).
 - Streaming: `prepare` retains the loaded `AsrModels`; each session gets a **fresh**
   `SlidingWindowAsrManager` sharing them (`loadModels(_:)` is reference assignment only) —
@@ -310,14 +335,30 @@ Implementation (from research, see `ShortcutMonitor` pattern):
   `.maskCommand`/`.maskAlternate` etc., they stay set while the *left* sibling is held).
 - **Never** swallow `flagsChanged` (would break the key's combos). The ONLY event ever swallowed:
   `keyDown` keyCode 53 (Esc) while `setRecordingActive(true)` → `onCancel` + return nil.
+- Start grace: `onBegin` fires 40 ms after the press. A key in that window means nothing ever began:
+  ⌘C opens no HUD, sound or microphone. A release in it is ignored too, including in toggle and hybrid:
+  under 40 ms it is more likely contact bounce.
 - Combo guard: a non-modifier `keyDown` within 1.0 s of the trigger press while held → `onCancel`
-  (the user was typing ⌘C, or fn+arrow when the key is Globe), do not swallow it. The
-  `modifierKeyCodes` 54…63 range covers all four trigger keycodes.
+  (the user was typing ⌘C, or fn+arrow when the key is Globe), do not swallow it. Later keys pass and the
+  recording continues: cancelling would throw away a long dictation, and if no words came of it the speech
+  gate drops the capture. The `modifierKeyCodes` 54…63 range covers all four trigger keycodes; key code
+  179, sent beside Fn with Karabiner, is not a chord when the trigger is Globe.
+- Hidden chords: a global shortcut registered with Carbon (⌘Space) never reaches a session tap, so a
+  listen-only `.cghidEventTap` feeds the same guard. It is optional; failing to install changes nothing else.
+  Events carrying `SyntheticEvents.marker` are MoDict's own ⌘V and are skipped by both taps.
 - Hybrid mode: press → `onBegin`. Release after ≥ 0.5 s → `onEnd` (push-to-talk). Release
   < 0.5 s → keep recording hands-free; next trigger press → `onEnd` (toggle).
 - Cooldown 0.4 s between session starts. Use `ProcessInfo.processInfo.systemUptime` for timing.
-- Re-arm on `.tapDisabledByTimeout` / `.tapDisabledByUserInput` (reset pressed state!) + a 5 s
-  watchdog Timer checking `CGEvent.tapIsEnabled`.
+- Taps run on their own thread, `com.modict.hotkey-taps`, never the main run loop: an active tap on
+  main would delay every keystroke in the system during any main-thread hitch. All state sits in
+  `HotkeyGestureMachine` behind a lock; actions reach the main queue in order.
+- Re-arm on `.tapDisabledByTimeout` / `.tapDisabledByUserInput`, then read the physical key: still down
+  keeps the session, up counts as a normal release. Every 5 s the health check re-enables or recreates a
+  tap, or reports lost permission. While held, the key is polled every 100 ms: three "up" samples act as
+  a missed release, only once the state has shown the key down during this hold (a software remapper
+  may never show it). `.userInitiatedAllowingIdleSystemSleep` keeps App Nap away from the taps.
+- `abandonSession()` is the silent reset for sessions the controller ended itself. Never call it from
+  `cancelDictation`, which `onCancel` reaches possibly late, after a newer session began.
 
 ### MicrophoneCapture [audio] — `MicrophoneCapture.swift`
 
@@ -336,18 +377,31 @@ final class MicrophoneCapture: @unchecked Sendable {
     /// `onLevel`). Set once at wiring time; mutating it while the engine runs
     /// would race the tap thread.
     var onChunk: (@Sendable ([Float]) -> Void)?
+    /// Reports failures after `start` returned, with the utterance they belong to.
+    var onFatalInterruption: (@Sendable (CaptureError, UInt64) -> Void)?
     /// Start/stop once at launch to prime CoreAudio & surface the mic permission early.
     func warmUp()
-    func start(deviceUID: String?) throws
-    /// Stops and returns the full utterance as 16 kHz mono Float32 samples.
-    func stop() -> [Float]
-    /// Stops discarding audio.
+    /// Returns at once; only "no input device" throws. The engine opens on the capture queue.
+    func start(deviceUID: String?, avoidBluetooth: Bool) throws
+    /// Captures `tail` more seconds, then returns the utterance as 16 kHz mono Float32.
+    func finish(tail: TimeInterval) async -> [Float]
+    /// Why an empty `finish` is empty, if the microphone failed. Clears it.
+    func takeCaptureFailure() -> CaptureError?
+    /// Drops the audio at once; the engine closes on the queue.
     func cancel()
+    func isCurrent(utterance: UInt64) -> Bool
     static func availableInputDevices() -> [InputDevice]
 }
 ```
 
 Non-negotiable details (each one is a documented production bug — see Docs/research):
+- Every engine call runs on one serial queue, never the main actor. `finish` ends at the first buffer
+  past the tail deadline, or by an independent backstop 0.3 s later, even with the queue stuck on a device
+  that will not open. An open that delivers nothing for 8 s is reported as a failure.
+- System default (`InputRoute`): a Bluetooth default gives way to a working built-in microphone when
+  `avoidBluetoothMicrophone` is on, and to nothing else, because opening it forces headphones into HFP
+  and another input may be silent. A built-in behind a closed lid takes the first other real input.
+  An explicit selection is never replaced.
 - Tap with the **native** input format; single reused `AVAudioConverter` to 16 kHz/1ch/Float32;
   input block returns `.haveData` once then **`.noDataNow`** — NEVER `.endOfStream`.
 - Guard `kAudioHardwarePropertyDefaultInputDevice != kAudioDeviceUnknown` before touching
@@ -385,13 +439,19 @@ enum InsertOutcome: Equatable, Sendable {
     func insert(_ text: String) async -> InsertOutcome
 }
 ```
-Clipboard + synthetic ⌘V (virtualKey 0x37/0x09, `.maskCommand`, `.cghidEventTap`,
-`CGEventSource(stateID: .privateState)`), 0.10 s pre-paste delay, 0.01 s between events.
+Clipboard + synthetic ⌘V (`.maskCommand`, `.cghidEventTap`, `CGEventSource(stateID: .privateState)`
+with `SyntheticEvents.marker`), 0.10 s pre-paste delay, 0.01 s between events. V is resolved at
+paste time (`PasteKeyResolver`): the Command layer of the current layout, then the ASCII-capable
+layout, then 9. Key 9 alone sends ⌘K on Dvorak and ⌘C on Turkish.
+`insert` returns once the paste is posted. The commit point is just before the first event: cancellation
+counts only before it. Restoration is `PasteClipboard`'s, on its own schedule, 0.5 s after the paste:
 Snapshot ALL `NSPasteboardItem`s; mark our write with a `com.modict.PasteSession` UUID type +
-`org.nspasteboard.TransientType`/`AutoGeneratedType`; restore after ≥ 0.25 s **only if** the
-pasteboard still holds our session (string matches AND marker matches). Check
-`IsSecureEventInputEnabled()` (Carbon) first; check `AXIsProcessTrusted()`.
-`settings.restoreClipboard` gates restoration.
+`org.nspasteboard.TransientType`/`AutoGeneratedType`; restore **only if** the pasteboard still holds our
+session (string matches AND marker matches). A second paste keeps the first original and supersedes the
+timer. A failed write or post restores at once, and so does quitting (`prepareForTermination`).
+Check `IsSecureEventInputEnabled()` (Carbon) first; check `AXIsProcessTrusted()`.
+`settings.restoreClipboard` gates restoration. `settings.smartSpacing` adds a leading space from the
+characters around the caret (read-only AX, `SmartSpacing`), to the pasted text only.
 
 ### HistoryStore [menubar] — `HistoryStore.swift`
 
@@ -576,7 +636,7 @@ relaunch before it ends reopens setup at the model step. On finish the view sets
   `languageHint` ("auto" = the Mac's language when supported, else model detection),
   `inputDeviceUID` (""), `hudPosition`
   (.nearPointer/.bottomCenter/.topCenter, near-pointer default + one-time migration),
-  `keepMicWarm`, `launchAtLogin`, `onboardingCompleted`, `dictationEnabled`,
+  `avoidBluetoothMicrophone`, `smartSpacing`, `launchAtLogin`, `onboardingCompleted`, `dictationEnabled`,
   `gestureHintsRemaining` (HUD guidance: 8 on a fresh install, 0 on upgrade, decremented by
   `recordGuidedDictation()` on each successful paste, reset when the key or mode changes).
 - `Permissions`: static helpers — `microphoneGranted`, `requestMicrophone() async -> Bool`,
@@ -603,7 +663,12 @@ relaunch before it ends reopens setup at the model step. On finish the view sets
   is declined so the hotkey monitor never opens a phantom session),
   `stopDictationAndTranscribe()`, `cancelDictation()`. Transcription runs under a timeout
   (`max(30 s, 4×audio + 5 s)` locally, 75 s minimum for cloud) so a wedged engine
-  cannot leave the app stuck in `.transcribing`.
+  cannot leave the app stuck in `.transcribing`. It goes through `Deadline`, not a task group: a group
+  waits for its children, and a Core ML or MLX call ignores cancellation. A wedged engine stays busy
+  behind the error, so the next dictation queues on its actor and can time out too.
+  `SpeechGate` (loudest 30 ms window under −60 dBFS, then Silero under 0.4 on captures up to 10 s) runs
+  before any engine, so a hold without speech costs nothing and reaches no cloud. It fails open and
+  has a 1.5 s budget. The model ships in `Contents/Resources` (Support/Models), pinned, with no network.
   Streaming: `startDictation` opens a best-effort preview session on the preview engine (the
   selected engine when it streams, otherwise Parakeet when Live preview is on and downloaded;
   mic `onChunk` → session;
@@ -623,7 +688,9 @@ relaunch before it ends reopens setup at the model step. On finish the view sets
 - Language mode v5 (`.swiftLanguageMode(.v5)` in Package.swift): keep code *clean* for a later
   strict-mode migration but don't fight the checker.
 - UI + controller: `@MainActor`. Audio tap callbacks: lock-protected, never touch UI directly.
-- CGEventTap callback: flip primitive state, `DispatchQueue.main.async` out. Nothing slow, ever.
+- CGEventTap callback, on the tap thread: lock, feed the machine, `DispatchQueue.main.async` out.
+  Nothing slow, ever.
+- Capture: one serial queue owns the audio engine; nothing there may block the main actor.
 - Engine: actor. Level updates: `onLevel` (audio thread) → HUD via main-queue dispatch,
   throttled naturally by buffer rate.
 

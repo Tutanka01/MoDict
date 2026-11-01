@@ -170,7 +170,7 @@ actor UsageLedger {
             try append(record)
             records.append(record)
         } catch {
-            NSLog("MoDict: usage ledger write failed: \(error)")
+            Log.app.error("Usage ledger write failed: \(error.localizedDescription, privacy: .public)")
         }
         return UsageSnapshot(records: records)
     }

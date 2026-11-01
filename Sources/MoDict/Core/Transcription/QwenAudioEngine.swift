@@ -11,8 +11,17 @@ actor QwenAudioEngine: TranscriptionEngine {
     static let approximateDownloadBytes: Int64 = 2_230_000_000
 
     private var model: Qwen3ASRModel?
+    /// The terms that fit the decoding prompt, and that prompt: nil without terms,
+    /// which decodes exactly as with no vocabulary at all.
+    private(set) var promptTerms: [String] = []
+    private(set) var decodingContext: String?
 
     var isReady: Bool { model != nil }
+
+    func setVocabularyHints(_ terms: [String]) {
+        promptTerms = Self.promptTerms(from: terms)
+        decodingContext = promptTerms.isEmpty ? nil : promptTerms.joined(separator: Self.termSeparator)
+    }
 
     func prepare(progress: @escaping @Sendable (ModelDownloadProgress) -> Void) async throws {
         if model != nil {
@@ -43,12 +52,16 @@ actor QwenAudioEngine: TranscriptionEngine {
         let conditioned = AudioConditioner.condition(samples)
         let options = Qwen3DecodingOptions(
             language: Self.language(for: languageHint),
+            context: decodingContext,
             repetitionPenalty: 1.15
         )
         var text = model.transcribe(audio: conditioned, sampleRate: 16_000, options: options)
         if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
            conditioned.count != samples.count {
             text = model.transcribe(audio: samples, sampleRate: 16_000, options: options)
+        }
+        if Self.isPromptEcho(text, terms: promptTerms) {
+            text = ""
         }
 
         return TranscriptionResult(
@@ -102,6 +115,51 @@ actor QwenAudioEngine: TranscriptionEngine {
         return hint.lowercased()
             .split(whereSeparator: { $0 == "-" || $0 == "_" })
             .first
+            .map(String.init)
+    }
+
+    // MARK: Vocabulary prompt
+
+    private static let maximumPromptTerms = 64
+    private static let maximumPromptCharacters = 1_000
+    /// speech-swift places the context in the system turn, untouched, and encodes
+    /// it as plain text, so a term cannot produce a control token.
+    private static let termSeparator = ", "
+
+    /// The unique, non-empty terms that fit the prompt, in order and whole. A term
+    /// too long for what is left is skipped, so one long replacement in the list
+    /// does not take every term after it out.
+    static func promptTerms(from terms: [String]) -> [String] {
+        var kept: [String] = []
+        var seen = Set<String>()
+        var characters = 0
+        for raw in terms {
+            guard kept.count < maximumPromptTerms else { break }
+            let term = raw.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+            guard !term.isEmpty, !seen.contains(term) else { continue }
+            let added = term.count + (kept.isEmpty ? 0 : termSeparator.count)
+            guard characters + added <= maximumPromptCharacters else { continue }
+            kept.append(term)
+            seen.insert(term)
+            characters += added
+        }
+        return kept
+    }
+
+    /// True when the output is the whole prompt back, in order: given only silence
+    /// or noise, a model can answer with its prompt. Anything less is kept, and so is
+    /// a prompt under three terms, because saying a name or two is a legitimate use of
+    /// the vocabulary and an output dropped here is words lost. Case, accents and
+    /// punctuation are ignored.
+    static func isPromptEcho(_ text: String, terms: [String]) -> Bool {
+        let listed = terms.map(echoWords).filter { !$0.isEmpty }
+        guard listed.count >= 3 else { return false }
+        return echoWords(text) == Array(listed.joined())
+    }
+
+    private static func echoWords(_ text: String) -> [String] {
+        text.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
+            .split { !$0.isLetter && !$0.isNumber }
             .map(String.init)
     }
 

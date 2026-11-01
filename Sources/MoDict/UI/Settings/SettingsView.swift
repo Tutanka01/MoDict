@@ -329,6 +329,12 @@ private struct SettingsDictationTab: View {
                         Text("Unavailable device").tag(settings.inputDeviceUID)
                     }
                 }
+
+                Toggle(isOn: $settings.avoidBluetoothMicrophone) {
+                    Text("Avoid Bluetooth microphones")
+                    Text("On System default, MoDict uses the Mac's built-in microphone when it can, so headphones stay in high-quality audio.")
+                }
+                .disabled(!settings.inputDeviceUID.isEmpty)
             } header: {
                 Text("Input")
             } footer: {
@@ -347,10 +353,11 @@ private struct SettingsDictationTab: View {
 
             Section {
                 Toggle("Restore clipboard after insert", isOn: $settings.restoreClipboard)
+                Toggle("Smart spacing", isOn: $settings.smartSpacing)
             } header: {
                 Text("Output")
             } footer: {
-                Text("Your previous clipboard is restored after MoDict pastes your words.")
+                Text("Your previous clipboard is restored after MoDict pastes your words. Smart spacing adds a space when your words would otherwise touch the text before them.")
             }
         }
         .formStyle(.grouped)

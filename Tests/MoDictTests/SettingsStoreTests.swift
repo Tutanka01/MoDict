@@ -20,7 +20,7 @@ struct SettingsStoreTests {
             #expect(defaults.string(forKey: "speechModel") == SpeechModel.parakeetV3.rawValue)
             #expect(store.inputDeviceUID == "")
             #expect(store.hudPosition == .nearPointer)
-            #expect(!store.keepMicWarm)
+            #expect(store.avoidBluetoothMicrophone)
             #expect(!store.onboardingCompleted)
             #expect(store.dictationEnabled)
         }
@@ -39,7 +39,7 @@ struct SettingsStoreTests {
             defaults.set("BuiltInMicUID", forKey: "inputDeviceUID")
             defaults.set(SettingsStore.HUDPosition.topCenter.rawValue, forKey: "hudPosition")
             defaults.set(true, forKey: "nearPointerHUDMigrationCompleted")
-            defaults.set(true, forKey: "keepMicWarm")
+            defaults.set(false, forKey: "avoidBluetoothMicrophone")
             defaults.set(true, forKey: "onboardingCompleted")
 
             let store = SettingsStore(defaults: defaults)
@@ -53,7 +53,7 @@ struct SettingsStoreTests {
             #expect(store.speechModel == .parakeetV3)
             #expect(store.inputDeviceUID == "BuiltInMicUID")
             #expect(store.hudPosition == .topCenter)
-            #expect(store.keepMicWarm)
+            #expect(!store.avoidBluetoothMicrophone)
             #expect(store.onboardingCompleted)
         }
     }
@@ -111,7 +111,7 @@ struct SettingsStoreTests {
             store.speechModel = .parakeetV3
             store.inputDeviceUID = "ExternalMicUID"
             store.hudPosition = .topCenter
-            store.keepMicWarm = true
+            store.avoidBluetoothMicrophone = false
             store.onboardingCompleted = true
 
             #expect(defaults.string(forKey: "hotkeyMode") == HotkeyMonitor.Mode.pushToTalk.rawValue)
@@ -123,7 +123,7 @@ struct SettingsStoreTests {
             #expect(defaults.string(forKey: "speechModel") == SpeechModel.parakeetV3.rawValue)
             #expect(defaults.string(forKey: "inputDeviceUID") == "ExternalMicUID")
             #expect(defaults.string(forKey: "hudPosition") == SettingsStore.HUDPosition.topCenter.rawValue)
-            #expect(defaults.object(forKey: "keepMicWarm") as? Bool == true)
+            #expect(defaults.object(forKey: "avoidBluetoothMicrophone") as? Bool == false)
             #expect(defaults.object(forKey: "onboardingCompleted") as? Bool == true)
         }
     }
@@ -164,6 +164,17 @@ struct SettingsStoreTests {
             #expect(store.livePreview)
             store.livePreview = false
             #expect(!SettingsStore(defaults: defaults).livePreview)
+        }
+    }
+
+    @Test
+    func smartSpacingIsOnByDefaultAndPersists() {
+        withEmptyDefaults { defaults in
+            let store = SettingsStore(defaults: defaults)
+            #expect(store.smartSpacing)
+            store.smartSpacing = false
+            #expect(defaults.object(forKey: "smartSpacing") as? Bool == false)
+            #expect(!SettingsStore(defaults: defaults).smartSpacing)
         }
     }
 

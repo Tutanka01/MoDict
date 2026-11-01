@@ -4,11 +4,24 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
+# A new push to a pull request replaces its stale run; every other run keeps its result.
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('{0}-pr-{1}', github.workflow, github.event.pull_request.number) || format('{0}-run-{1}', github.workflow, github.run_id) }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: macos-26
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      # Xcode 26+ ships it separately, and MLX's kernels cannot build without it.
+      - name: Install the Metal Toolchain
+        run: xcrun --sdk macosx metal --version || xcodebuild -downloadComponent MetalToolchain
 
       - name: Swift version
         run: swift --version
@@ -37,7 +50,7 @@ jobs:
         run: lipo -info build/MoDict.app/Contents/MacOS/MoDict
 
       - name: Upload app bundle
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: MoDict.app
           path: build/MoDict.app

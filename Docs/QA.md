@@ -210,6 +210,8 @@ security find-identity -v -p codesigning
 - [ ] Supprimer le modele actif: la dictee est indisponible avec `Model not ready yet`
   jusqu'au re-telechargement, sans crash ni HUD bloque.
 - [ ] `Reveal in Finder` ouvre le dossier de cache du modele de la ligne.
+- [ ] Log: `log stream --predicate 'subsystem == "com.modict.app"' --level info` montre une
+  ligne par dictee, avec des nombres et des libelles, jamais le texte.
 - [ ] Cache present: lancement suivant ne retelecharge pas, passe par checking/ready.
 - [ ] Qwen actif: le HUD n'affiche pas de transcription live (normal), le texte final arrive
   apres le relachement. Parakeet actif: la preview live fonctionne toujours.
@@ -262,7 +264,7 @@ Pour chaque app cible:
 - [ ] mettre au presse-papiers un contenu temoin avant la dictee;
 - [ ] dicter la phrase QA;
 - [ ] verifier insertion au curseur, pas en fin de document, pas dans MoDict;
-- [ ] verifier que le presse-papiers temoin revient apres ~0,25 s quand `Restore clipboard
+- [ ] verifier que le presse-papiers temoin revient apres ~0,5 s quand `Restore clipboard
   after insert` est active;
 - [ ] verifier que la derniere dictee apparait dans l'historique menu bar, max 5 elements.
 
@@ -283,6 +285,15 @@ Cas longs:
 - [ ] dictee courte > 0,35 s: inseree.
 - [ ] tap accidentel < 0,35 s: rien n'est insere, HUD disparait silencieusement.
 - [ ] phrase multi-lignes ou ponctuee: pas de troncature visible.
+- [ ] Touche tenue ~1 s sans parler, avec le son de depart et de la musique eteinte: `Didn't
+  catch that.`, rien de colle, aucune requete cloud, rien dans `Usage`.
+- [ ] Fin de phrase: relacher pile sur le dernier mot, puis un peu avant: le mot reste.
+- [ ] Deux dictees de suite dans un meme champ: une seule espace entre les phrases. Dans
+  `l'|ami`, au milieu d'un mot, apres `3,` puis `5`, et sur une selection: aucune espace ajoutee.
+- [ ] Dictee de 45 s ou plus: aucun passage perdu, latence du collage inferieure a 1 s.
+- [ ] Dvorak, Turc-F et russe actifs: la dictee colle bien, sans declencher ⌘K ou ⌘C.
+- [ ] Deux dictees a moins de 0,5 s: le presse-papiers revient a l'original. Quitter MoDict juste
+  apres un collage: l'original revient aussi.
 - [ ] cible non editable: texte non perdu, historique utilisable pour copier.
 
 ## Secure Input
@@ -305,7 +316,12 @@ eviter le cooldown.
 - [ ] Relacher: transcription puis insertion.
 - [ ] Tap bref: rien n'est insere.
 - [ ] Gauche `Cmd`: ne demarre jamais MoDict.
-- [ ] Droite `Cmd` + `C` dans la premiere seconde: annule MoDict et laisse `Cmd+C` passer.
+- [ ] Droite `Cmd` + `C` tres vite: ni HUD, ni son, ni pastille micro, et `Cmd+C` passe. Dans
+  la premiere seconde: annule MoDict et laisse `Cmd+C` passer. Apres: la dictee continue.
+- [ ] Droite `Cmd` tenu puis Espace (Spotlight) dans la premiere seconde: annule, rien de colle.
+- [ ] Globe avec Karabiner actif: la dictee ne s'annule pas seule.
+- [ ] Frappe normale pendant un chargement de modele: aucune latence clavier.
+- [ ] Une seconde copie de MoDict sort aussitot; `make run` remplace la copie lancee.
 
 ### Toggle
 
@@ -328,6 +344,7 @@ eviter le cooldown.
   l'historique, et Esc n'atteint pas l'app cible.
 - [ ] Pendant un enregistrement Toggle/Hybrid mains libres: Esc annule de la meme maniere.
 - [ ] Apres annulation, une nouvelle dictee fonctionne sans relancer.
+- [ ] Esc juste apres le relachement: rien n'est transcrit ni insere.
 - [ ] Esc hors enregistrement reste le comportement normal de l'app cible.
 
 ## Microphones, devices, AirPods
@@ -342,6 +359,10 @@ eviter le cooldown.
   audio bloque, prochaine dictee OK.
 - [ ] Revenir au micro interne pendant que MoDict tourne: prochaine dictee OK.
 - [ ] Aucun micro disponible: HUD `Microphone unavailable`, pas de crash.
+- [ ] AirPods en entree systeme, `Avoid Bluetooth microphones` actif: le micro integre ecoute et
+  le casque reste en haute qualite. Inactif: les AirPods ecoutent. Sans micro integre: les AirPods
+  restent. Micro choisi explicitement: jamais remplace.
+- [ ] Capot ferme, ecran externe: un autre micro prend le relais si le defaut etait l'integre.
 
 Commandes utiles:
 
@@ -359,6 +380,8 @@ system_profiler SPAudioDataType
   ```
 
 - [ ] Au reveil: pas de HUD reste visible, pas d'enregistrement fantome.
+- [ ] Longue dictee mains libres sans toucher au clavier, delai de veille court: pas de veille pendant
+  l'enregistrement. Veille forcee pendant l'enregistrement: annulee, rien colle au reveil.
 - [ ] Droite `Cmd` fonctionne dans les 10 s apres wake.
 - [ ] AirPods reconnectes apres wake: prochaine dictee OK.
 - [ ] Apres sleep/wake avec l'app cible en plein ecran: HUD apparait sur le bon Space,

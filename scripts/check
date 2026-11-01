@@ -1,0 +1,29 @@
+#!/bin/bash
+# The local check loop: runs the tests and refuses to call a run with no executed
+# tests a pass. `make test` can fall back to compile-only without an xctest host.
+#   scripts/check                         every test
+#   scripts/check SpeechGateTests         only the matching tests
+# Exit codes: 10 toolchain, 11 build or test failure, 12 no test executed.
+set -uo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+if ! xcrun --sdk macosx metal --version >/dev/null 2>&1; then
+    echo "error: Metal Toolchain missing; MLX cannot build. Run: xcodebuild -downloadComponent MetalToolchain" >&2
+    exit 10
+fi
+
+log="$(mktemp -t modict-check)"
+trap 'rm -f "$log"' EXIT
+filter=()
+[ $# -gt 0 ] && filter=(--filter "$1")
+swift test ${filter[@]+"${filter[@]}"} > "$log" 2>&1
+status=$?
+
+if grep -q "unable to spawn process.*MetalToolchain" "$log"; then
+    echo "error: .build still points at the Metal Toolchain's mount from before a reboot." >&2
+    echo "Run: rm -rf .build/out, then try again." >&2
+    exit 10
+fi
+grep -E '^(✘|error:)|Test run with|warning: unreachable' "$log" | cut -c1-220
+[ "$status" -eq 0 ] || exit 11
+grep -Eq 'Test run with [1-9][0-9]* tests?' "$log" || { echo "error: no test was executed" >&2; exit 12; }
