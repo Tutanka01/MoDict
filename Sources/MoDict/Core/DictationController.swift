@@ -160,7 +160,9 @@ final class DictationController: ObservableObject {
         }
     }
 
-    @Published private(set) var phase: Phase = .idle
+    @Published private(set) var phase: Phase = .idle {
+        didSet { idleSleep.setActive(phase != .idle) }
+    }
     @Published private(set) var modelState: ModelState = .unknown
     @Published private(set) var modelStates: [SpeechModel: ModelState] = [:]
     @Published private(set) var isManagingModel = false
@@ -183,6 +185,8 @@ final class DictationController: ObservableObject {
     private let inserter: TextInserter
     private let hud: HUDController
     private let sounds: SoundFeedback
+    private let speechGate = SpeechGate()
+    private let idleSleep = IdleSleepGuard()
 
     /// Identity of the recording in flight; async completions compare against it
     /// and drop themselves when stale (double-taps, rapid re-triggers).
@@ -195,12 +199,20 @@ final class DictationController: ObservableObject {
     /// queued main-actor hops) must not overwrite it while insertion runs.
     private var partialSettled = false
     private var recordingStartedAt: TimeInterval = 0
+    private var trace: DictationTrace?
     private var transcriptionTask: Task<Void, Never>?
     private var hideTask: Task<Void, Never>?
-    private var workspaceObserver: NSObjectProtocol?
+    private var workspaceObservers: [NSObjectProtocol] = []
+    private var vocabularyHintsTask: Task<Void, Never>?
 
-    /// Recordings shorter than this are treated as accidental and dropped.
+    /// Holds shorter than this are treated as accidental and dropped.
     private static let minimumUtteranceSeconds: TimeInterval = 0.35
+    /// Capture past the physical release. Hex measured that releasing 100 ms before
+    /// the end of the last word keeps it 7 times in 10, and 200 ms only 2 in 10.
+    private static let releaseTail: TimeInterval = 0.2
+    /// Parakeet refuses anything shorter (`ASRConstants`, 0.3 s), and a hold can end up
+    /// with less audio than its length when the microphone was slow to open.
+    private static let minimumEngineSamples = 4_800
     private nonisolated static let sampleRate = 16_000
     private static let minimumTranscriptionTimeout: TimeInterval = 30
 
@@ -251,9 +263,9 @@ final class DictationController: ObservableObject {
             // producer keeps the chunks ordered end-to-end.
             box.value?.feed(chunk)
         }
-        microphone.onFatalInterruption = { [weak self] error in
+        microphone.onFatalInterruption = { [weak self] error, utterance in
             DispatchQueue.main.async {
-                self?.handleMicrophoneInterruption(error)
+                self?.handleMicrophoneInterruption(error, utterance: utterance)
             }
         }
     }
@@ -270,7 +282,20 @@ final class DictationController: ObservableObject {
         microphone.warmUp()
         prepareEngine()
         preparePreviewEngine()
-        observePermissionChanges()
+        observeWorkspace()
+        Task { await speechGate.prepare() }
+        pushVocabularyHints()
+    }
+
+    /// Qwen takes the vocabulary as a context prompt. `$rules` yields the current list
+    /// and then each change; one loop keeps them in order.
+    private func pushVocabularyHints() {
+        guard vocabularyHintsTask == nil else { return }
+        vocabularyHintsTask = Task { [vocabulary, qwenAudioEngine] in
+            for await rules in vocabulary.$rules.values {
+                await qwenAudioEngine.setVocabularyHints(rules.map(\.replacement))
+            }
+        }
     }
 
     /// Re-reads TCC state and reconciles: re-arms the event tap once Input
@@ -291,22 +316,41 @@ final class DictationController: ObservableObject {
         }
     }
 
-    /// The user grants permissions in System Settings, then switches back — any
-    /// app activation is the moment to reconcile.
-    private func observePermissionChanges() {
-        guard workspaceObserver == nil else { return }
-        workspaceObserver = NSWorkspace.shared.notificationCenter.addObserver(
-            forName: NSWorkspace.didActivateApplicationNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.recheckPermissions() }
+    private func observeWorkspace() {
+        guard workspaceObservers.isEmpty else { return }
+        let center = NSWorkspace.shared.notificationCenter
+        func observe(_ name: Notification.Name, _ action: @escaping @MainActor (DictationController) -> Void) {
+            workspaceObservers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    if let self { action(self) }
+                }
+            })
         }
+        // The user grants permissions in System Settings, then switches back: any
+        // app activation is the moment to reconcile. A wake can also leave the tap dead.
+        observe(NSWorkspace.didActivateApplicationNotification) { $0.recheckPermissions() }
+        observe(NSWorkspace.didWakeNotification) { $0.recheckPermissions() }
+        // A recording cannot outlive the session it started in. Pasting after the wake
+        // could land anywhere, so it is dropped. A transcription already running finishes.
+        observe(NSWorkspace.willSleepNotification) { $0.abandonRecording() }
+        observe(NSWorkspace.sessionDidResignActiveNotification) { $0.abandonRecording() }
+    }
+
+    private func abandonRecording() {
+        guard phase == .recording else { return }
+        hotkey.abandonSession()
+        cancelDictation()
     }
 
     func deactivate() {
         cancelDictation()
         hotkey.stop()
+    }
+
+    /// Synchronous: nothing scheduled runs once `applicationWillTerminate` returns.
+    func prepareForTermination() {
+        deactivate()
+        inserter.flushPendingRestore()
     }
 
     func refreshHotkeyConfiguration() {
@@ -317,6 +361,7 @@ final class DictationController: ObservableObject {
     func setDictationEnabled(_ enabled: Bool) {
         settings.dictationEnabled = enabled
         if !enabled {
+            hotkey.abandonSession()
             cancelDictation()
         }
     }
@@ -366,6 +411,7 @@ final class DictationController: ObservableObject {
 
     func selectModel(_ model: SpeechModel) {
         guard settings.speechModel != model else { return }
+        hotkey.abandonSession()
         cancelDictation()
         let previous = settings.speechModel
         settings.speechModel = model
@@ -383,7 +429,10 @@ final class DictationController: ObservableObject {
     }
 
     func refreshCloudKeyState() {
-        if settings.speechModel.isCloud { cancelDictation() }
+        if settings.speechModel.isCloud {
+            hotkey.abandonSession()
+            cancelDictation()
+        }
         for model in SpeechModel.cloudModels {
             setModelState(settings.hasOpenRouterKey ? .unknown : .needsAPIKey, for: model)
         }
@@ -393,6 +442,7 @@ final class DictationController: ObservableObject {
     func deleteModel(_ model: SpeechModel) {
         guard !model.isCloud else { return }
         guard !isManagingModel else { return }
+        hotkey.abandonSession()
         cancelDictation()
         isManagingModel = true
         setModelState(.downloading(ModelDownloadProgress(phase: .checking, fraction: 0)), for: model)
@@ -478,9 +528,15 @@ final class DictationController: ObservableObject {
             return false
         }
 
+        // Retries a failed download at the next dictation, and covers a first
+        // dictation reached through setup, before `activate()` has run.
+        Task { await speechGate.prepare() }
+
         let recordingID = UUID()
         currentRecordingID = recordingID
-        recordingStartedAt = ProcessInfo.processInfo.systemUptime
+        recordingStartedAt = hotkey.lastPressedAt
+        trace = DictationTrace(modelID: settings.speechModel.rawValue, pressedAt: recordingStartedAt)
+        trace?.mark(.begin)
 
         // HUD first: it must be on screen at key-down, before audio flows.
         hideTask?.cancel()
@@ -504,13 +560,16 @@ final class DictationController: ObservableObject {
         // into the first phoneme and the model hears a degraded opening word.
         sounds.dictationStarted()
         do {
-            try microphone.start(deviceUID: settings.inputDeviceUID.isEmpty ? nil : settings.inputDeviceUID)
+            try microphone.start(
+                deviceUID: settings.inputDeviceUID.isEmpty ? nil : settings.inputDeviceUID,
+                avoidBluetooth: settings.avoidBluetoothMicrophone)
         } catch {
             if let session = streamingSessionBox.take() {
                 Task { await session.cancel() }
             }
             currentRecordingID = nil
             hotkey.setRecordingActive(false)
+            endTrace(.microphoneFailed)
             showUserIssue(microphoneIssue(for: error))
             sounds.dictationFailed()
             return false
@@ -524,13 +583,15 @@ final class DictationController: ObservableObject {
     func stopDictationAndTranscribe() {
         guard phase == .recording, let recordingID = currentRecordingID else { return }
 
-        let samples = microphone.stop()
-        let session = streamingSessionBox.take()
-        let duration = TimeInterval(samples.count) / TimeInterval(Self.sampleRate)
-
-        guard duration >= Self.minimumUtteranceSeconds else {
+        // Judged on the physical hold, at once: a tap must not wait out a tail, and
+        // a microphone still opening must not make a real hold look accidental.
+        let heldFor = ProcessInfo.processInfo.systemUptime - recordingStartedAt
+        trace?.mark(.hold)
+        guard heldFor >= Self.minimumUtteranceSeconds else {
             // Accidental tap — vanish silently (including the streaming session).
-            if let session {
+            endTrace(.tap)
+            microphone.cancel()
+            if let session = streamingSessionBox.take() {
                 Task { await session.cancel() }
             }
             phase = .idle
@@ -552,10 +613,48 @@ final class DictationController: ObservableObject {
         // Capture the model now: the result landing may trail the request, and
         // the usage record must name the model that actually ran.
         let model = settings.speechModel
-        let timeout = Self.transcriptionTimeout(forAudioDuration: duration, cloud: model.isCloud)
         transcriptionTask?.cancel()
         transcriptionTask = Task { [weak self] in
             guard let self else { return }
+            // People release before the end of their last word; the tail keeps it.
+            // A cancel during it makes this return early and the guard ends the task.
+            let samples = await self.microphone.finish(tail: Self.releaseTail)
+            guard self.currentRecordingID == recordingID else { return }
+            self.trace?.mark(.tail)
+            self.trace?.noteAudio(seconds: TimeInterval(samples.count) / TimeInterval(Self.sampleRate))
+            let session = self.streamingSessionBox.take()
+            // Silence and noise make the models write words nobody said, and a cloud
+            // model would bill for them, so nothing without speech reaches an engine.
+            let hasSpeech: Bool
+            if samples.count < Self.minimumEngineSamples {
+                // A dead microphone is not silence: say what is actually wrong.
+                if let failure = self.microphone.takeCaptureFailure() {
+                    self.failCapture(failure, recordingID: recordingID)
+                    Task { await session?.cancel() }
+                    return
+                }
+                hasSpeech = false
+            } else if case .speech = await self.speechGate.evaluate(samples) {
+                hasSpeech = true
+            } else {
+                hasSpeech = false
+            }
+            // Esc during the gate: a stale decode would only hold up the engine, and
+            // the trace may already be a newer dictation's.
+            guard self.currentRecordingID == recordingID else {
+                Task { await session?.cancel() }
+                return
+            }
+            self.trace?.mark(.gate)
+            guard hasSpeech else {
+                self.endTrace(.noSpeech)
+                self.settleWithoutWords(recordingID: recordingID)
+                Task { await session?.cancel() }
+                return
+            }
+            // After the tail, so capture time never eats into the transcription's.
+            let duration = TimeInterval(samples.count) / TimeInterval(Self.sampleRate)
+            let timeout = Self.transcriptionTimeout(forAudioDuration: duration, cloud: model.isCloud)
             do {
                 let result = try await self.transcribeWithTimeout(
                     samples,
@@ -563,17 +662,52 @@ final class DictationController: ObservableObject {
                     timeout: timeout,
                     session: session
                 )
+                self.trace?.mark(.engine)
                 await self.finishTranscription(result, recordingID: recordingID, model: model)
             } catch {
-                // Idempotent; drops a session a timeout left mid-finish.
-                await session?.cancel()
+                // Unblock the user first: the session may be what wedged.
                 await self.failTranscription(error, recordingID: recordingID)
+                Task { await session?.cancel() }
             }
         }
     }
 
+    private func failCapture(_ error: MicrophoneCapture.CaptureError, recordingID: UUID) {
+        guard currentRecordingID == recordingID else { return }
+        phase = .idle
+        currentRecordingID = nil
+        transcriptionTask = nil
+        partialTranscript = nil
+        hud.setPartial(nil)
+        hotkey.setRecordingActive(false)
+        endTrace(.microphoneFailed)
+        sounds.dictationFailed()
+        showUserIssue(microphoneIssue(for: error))
+    }
+
+    /// One line per dictation, numbers and labels only.
+    private func endTrace(_ outcome: DictationTrace.Outcome) {
+        guard let trace else { return }
+        self.trace = nil
+        let line = trace.summary(outcome: outcome)
+        Log.dictation.info("\(line, privacy: .public)")
+    }
+
+    /// Nothing to paste: no audio, no speech, or an empty transcript.
+    private func settleWithoutWords(recordingID: UUID) {
+        guard currentRecordingID == recordingID else { return }
+        phase = .idle
+        currentRecordingID = nil
+        transcriptionTask = nil
+        partialTranscript = nil
+        hud.setPartial(nil)
+        hotkey.setRecordingActive(false)
+        transientHUD(.error(message: "Didn't catch that.", symbol: "waveform"), dwell: 1.4)
+    }
+
     func cancelDictation() {
         guard phase == .recording || phase == .transcribing else { return }
+        endTrace(.cancelled)
         hotkey.setRecordingActive(false)
         microphone.cancel()
         if let session = streamingSessionBox.take() {
@@ -607,6 +741,8 @@ final class DictationController: ObservableObject {
             outputTokens: result.usage?.outputTokens,
             costUSD: result.usage?.costUSD
         ))
+        // Esc during the ledger write: nothing below applies to a cancelled dictation.
+        guard currentRecordingID == recordingID else { return }
         let cost = result.usage?.costUSD
 
         // Personal vocabulary runs before the empty-check: a rule can delete the
@@ -614,14 +750,8 @@ final class DictationController: ObservableObject {
         let cleaned = TranscriptSanitizer.clean(result.text)
         let text = vocabulary.apply(to: cleaned)
         guard !text.isEmpty else {
-            phase = .idle
-            currentRecordingID = nil
-            transcriptionTask = nil
-            partialTranscript = nil
-            hud.setPartial(nil)
-            hotkey.setRecordingActive(false)
-            transientHUD(.error(message: "Didn't catch that.", symbol: "waveform"),
-                         dwell: 1.4)
+            endTrace(.empty)
+            settleWithoutWords(recordingID: recordingID)
             return
         }
 
@@ -632,16 +762,26 @@ final class DictationController: ObservableObject {
         hud.setPartial(settled)
 
         let outcome = await inserter.insert(text)
-        guard currentRecordingID == recordingID else { return }
+        guard currentRecordingID == recordingID else {
+            // Cancelled while the paste was being posted: the text landed anyway,
+            // so the words must still be in Recent.
+            if outcome == .inserted {
+                lastInsertedText = text
+                history.add(text, costUSD: cost)
+            }
+            return
+        }
         phase = .idle
         currentRecordingID = nil
         transcriptionTask = nil
         partialTranscript = nil
         hud.setPartial(nil)
         hotkey.setRecordingActive(false)
+        trace?.mark(.paste)
 
         switch outcome {
         case .inserted:
+            endTrace(.pasted)
             userIssue = nil
             lastInsertedText = text
             history.add(text, costUSD: cost)
@@ -650,14 +790,17 @@ final class DictationController: ObservableObject {
             hud.setInsertedWordCount(text.split(whereSeparator: \.isWhitespace).count)
             transientHUD(.success, dwell: Theme.successDwell)
         case .secureInputBlocked:
+            endTrace(.secureInput)
             history.add(text, costUSD: cost)   // don't lose the words — they're in history
             sounds.dictationFailed()
             showUserIssue(.secureInputBlocked)
         case .noAccessibilityPermission:
+            endTrace(.noAccessibility)
             history.add(text, costUSD: cost)
             sounds.dictationFailed()
             showUserIssue(.accessibilityPermissionMissing)
         case .failed(let reason):
+            endTrace(.pasteFailed)
             history.add(text, costUSD: cost)
             sounds.dictationFailed()
             showUserIssue(.insertionFailed(reason))
@@ -666,6 +809,7 @@ final class DictationController: ObservableObject {
 
     private func failTranscription(_ error: Error, recordingID: UUID) async {
         guard currentRecordingID == recordingID else { return }
+        endTrace(error is TranscriptionTimeoutError ? .timeout : .failed)
         phase = .idle
         currentRecordingID = nil
         transcriptionTask = nil
@@ -731,6 +875,7 @@ final class DictationController: ObservableObject {
     }
 
     private func handleInputMonitoringLost() {
+        hotkey.abandonSession()
         guard phase == .recording || phase == .transcribing else {
             showUserIssue(.inputMonitoringPermissionMissing)
             return
@@ -799,8 +944,13 @@ final class DictationController: ObservableObject {
         hud.setActionHint("Press again to paste", persistent: true)
     }
 
-    private func handleMicrophoneInterruption(_ error: MicrophoneCapture.CaptureError) {
-        guard phase == .recording else { return }
+    private func handleMicrophoneInterruption(_ error: MicrophoneCapture.CaptureError, utterance: UInt64) {
+        // Past `.recording`, `finish` already returned what there was. The utterance
+        // check drops a failure that hopped here while a newer recording started.
+        guard phase == .recording, microphone.isCurrent(utterance: utterance) else { return }
+        endTrace(.microphoneFailed)
+        microphone.cancel()   // the audio of a dead session has no reason to stay around
+        hotkey.abandonSession()
         hotkey.setRecordingActive(false)
         if let session = streamingSessionBox.take() {
             Task { await session.cancel() }
@@ -835,20 +985,9 @@ final class DictationController: ObservableObject {
                                        timeout: TimeInterval,
                                        session: (any StreamingTranscriptionSession)?) async throws -> TranscriptionResult {
         let engine = selectedEngine
-        return try await withThrowingTaskGroup(of: TranscriptionResult.self) { group in
-            group.addTask {
-                try await Self.finalTranscription(
-                    samples, languageHint: languageHint, session: session, engine: engine)
-            }
-            group.addTask {
-                try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
-                throw TranscriptionTimeoutError()
-            }
-            guard let result = try await group.next() else {
-                throw TranscriptionTimeoutError()
-            }
-            group.cancelAll()
-            return result
+        return try await Deadline.run(seconds: timeout, timeoutError: { TranscriptionTimeoutError() }) {
+            try await Self.finalTranscription(
+                samples, languageHint: languageHint, session: session, engine: engine)
         }
     }
 

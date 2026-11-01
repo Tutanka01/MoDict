@@ -33,12 +33,17 @@ builds; use `make clean` only to resolve a diagnosed build-cache problem.
 | Compile without packaging | `swift build` |
 | Run a relevant test suite (example) | `swift test --filter InterfaceStateTests` |
 | Run all tests | `swift test` |
+| Run tests, refusing a run that executed none | `scripts/check` (optional filter) |
+| Measure a change to capture or transcription | `scripts/bench.sh`, see `Docs/research/transcription-benchmark.md` |
 | Build release, bundle, sign and verify once | `make sign verify-bundle` |
 | Recheck an existing bundle without rebuilding | `make verify-bundle` |
 | Inspect signing | `make diagnose-signature` |
 | Launch an already verified bundle directly | `build/MoDict.app/Contents/MacOS/MoDict` |
 | Build and launch during development | `make run` |
 
+- MLX needs the separately installed Metal Toolchain (`xcodebuild -downloadComponent MetalToolchain`).
+  After a reboot its mount path changes and `.build` still points at the old one ("unable to spawn
+  process … MetalToolchain"): `rm -rf .build/out` resolves it, with no need for `make clean`.
 - Xcode is installed on the current development machine; local tests can run. Check
   actual runner output and report executed tests, never compilation as a passing suite.
   `make test` can fall back to compile-only when the xctest host is unavailable.

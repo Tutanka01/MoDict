@@ -151,4 +151,11 @@ protocol TranscriptionEngine: Actor {
         onPartial: @escaping @Sendable (PartialTranscript) -> Void
     ) -> StreamingTranscriptionSession?
     func unload() async
+    /// Terms the user wants spelled their way, for engines that take a decoding
+    /// prompt. Others ignore them (see the default below).
+    func setVocabularyHints(_ terms: [String]) async
+}
+
+extension TranscriptionEngine {
+    func setVocabularyHints(_ terms: [String]) async {}
 }

@@ -1,6 +1,7 @@
 import AVFoundation
 import FluidAudio
 import Foundation
+import os
 
 /// Parakeet-TDT 0.6B **v3** (multilingual, on-device, ANE) via FluidAudio 0.15.7.
 ///
@@ -74,21 +75,28 @@ actor FluidAudioEngine: TranscriptionEngine {
             let models = try await AsrModels.downloadAndLoad(version: .v3, progressHandler: { raw in
                 bridge.emit(raw)
             })
-            // v3 long-form already resolves to the no-mel path (issue #594);
-            // dual-decode arbitration probes that path once per long utterance
-            // and commits to the best-scoring layout, eliminating boundary
-            // stitching artifacts. Inert for the ≤15 s single-window path.
-            let manager = AsrManager(config: ASRConfig(dualDecodeArbitration: true))
+            // v3 long-form already resolves to the no-mel path (issue #594). Dual-decode
+            // arbitration stays off: on real French over 15 s it raised WER from 11.8%
+            // to 14.4%, dropping whole passages, at about three times the latency
+            // (Docs/research/long-dictation-arbitration.md).
+            let manager = AsrManager(config: ASRConfig())
             try await manager.loadModels(models)
             // French decodes share every loaded model and differ only in the
             // steered joint wrapper (managers are reference holders).
-            let french = FrenchSteering.steered(models, strength: FrenchSteering.baselineStrength)
-            let frenchManager = AsrManager(config: ASRConfig(dualDecodeArbitration: true))
-            try await frenchManager.loadModels(french)
-            let redecodeManager = AsrManager(config: ASRConfig(dualDecodeArbitration: true))
-            try await redecodeManager.loadModels(
-                FrenchSteering.steered(models, strength: FrenchSteering.driftStrength))
-            await self?.adopt(manager, models: models, french: (frenchManager, redecodeManager, french))
+            var steered: SteeredFrench?
+            if FrenchSteering.isValid(forEncoderIn: Self.modelsDirectory) {
+                let french = FrenchSteering.steered(models, strength: FrenchSteering.baselineStrength)
+                let frenchManager = AsrManager(config: ASRConfig())
+                try await frenchManager.loadModels(french)
+                let redecodeManager = AsrManager(config: ASRConfig())
+                try await redecodeManager.loadModels(
+                    FrenchSteering.steered(models, strength: FrenchSteering.driftStrength))
+                steered = SteeredFrench(manager: frenchManager, redecodeManager: redecodeManager, models: french)
+            } else {
+                // Not a reason to fail: French still decodes with `language: .french`.
+                Self.logger.warning("Parakeet encoder differs from the one French steering was derived from; steering is off")
+            }
+            await self?.adopt(manager, models: models, french: steered)
         }
         prepareTask = task
 
@@ -105,16 +113,19 @@ actor FluidAudioEngine: TranscriptionEngine {
         progress.clear()
     }
 
-    private func adopt(
-        _ manager: AsrManager,
-        models: AsrModels,
-        french: (manager: AsrManager, redecodeManager: AsrManager, models: AsrModels)
-    ) {
+    private struct SteeredFrench {
+        let manager: AsrManager
+        let redecodeManager: AsrManager
+        let models: AsrModels
+    }
+
+    /// Without `french`, French batch and streaming decodes use the plain models.
+    private func adopt(_ manager: AsrManager, models: AsrModels, french: SteeredFrench?) {
         self.manager = manager
         self.models = models
-        self.frenchManager = french.manager
-        self.frenchRedecodeManager = french.redecodeManager
-        self.frenchModels = french.models
+        self.frenchManager = french?.manager
+        self.frenchRedecodeManager = french?.redecodeManager
+        self.frenchModels = french?.models
         self.isModelReady = true
     }
 
@@ -133,7 +144,7 @@ actor FluidAudioEngine: TranscriptionEngine {
                 language: nil
             )
         } catch {
-            NSLog("MoDict: ANE warm-up failed: \(error)")
+            Log.model.error("ANE warm-up failed: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -328,6 +339,7 @@ actor FluidAudioEngine: TranscriptionEngine {
 
     // MARK: Constants
 
+    private static let logger = Logger(subsystem: "com.modict.app", category: "FluidAudioEngine")
     private static let sampleRate = 16_000
     /// One second of silence fed to the ANE to warm it after load.
     private static let warmUpSampleCount = 16_000
@@ -413,7 +425,7 @@ private final class FluidStreamingSession: StreamingTranscriptionSession, @unche
                 updateStream = await manager.transcriptionUpdates
                 try await manager.startStreaming(source: .microphone)
             } catch {
-                NSLog("MoDict: streaming session failed to start: \(error)")
+                Log.model.error("Streaming session failed to start: \(error.localizedDescription, privacy: .public)")
                 return nil
             }
 

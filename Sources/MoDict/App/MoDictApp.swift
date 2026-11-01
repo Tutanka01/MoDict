@@ -22,8 +22,25 @@ enum MoDictEntryPoint {
             print("MODICT_LAUNCH_CHECK: ok (dyld + MLX kernels)")
             exit(EXIT_SUCCESS)
         }
+        // Developer mode, before any app state: see `TranscriptionBenchmark`.
+        let environment = ProcessInfo.processInfo.environment
+        if let manifest = environment["MODICT_BENCH_MANIFEST"] {
+            Task.detached {
+                exit(await TranscriptionBenchmark.run(manifestPath: manifest, environment: environment))
+            }
+            dispatchMain()
+        }
+        // Past the launch check, so `verify-bundle` works beside a running copy.
+        guard let lock = InstanceLock.acquire(patience: 2) else {
+            print("MoDict is already running.")
+            exit(EXIT_SUCCESS)
+        }
+        instanceLock = lock
         MoDictApp.main()
     }
+
+    /// Held for the life of the process.
+    private static var instanceLock: InstanceLock?
 }
 
 struct MoDictApp: App {
@@ -152,8 +169,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        Task { @MainActor in
-            AppModel.shared.controller.deactivate()
+        // Called on the main thread, and the process ends when this returns, so a
+        // Task would never run.
+        MainActor.assumeIsolated {
+            AppModel.shared.controller.prepareForTermination()
         }
     }
 }

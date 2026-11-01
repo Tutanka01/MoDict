@@ -100,7 +100,8 @@ MoDict asks for three system permissions. Each one maps to a single, visible job
   synthetic ⌘V at your cursor.
 
 To be plain about what MoDict does **not** do: it is not a keylogger — the key monitor
-only tracks the right ⌘ (and swallows Esc while you're recording, so you can cancel).
+only tracks your dictation key, and notices other keys to tell a shortcut from a dictation; it swallows
+only Esc while you're recording, so you can cancel.
 With local models, normal dictation makes no network request; downloading a local
 model connects to Hugging Face. Cloud dictation requires an OpenRouter API key.
 
@@ -215,6 +216,7 @@ MoDict builds on the work of others; attribution is required:
 | [speech-swift](https://github.com/soniqo/speech-swift) | Apache-2.0 |
 | [MLX](https://github.com/ml-explore/mlx) (runtime and Metal kernels) | MIT |
 | [Qwen3-ASR 1.7B](https://huggingface.co/aufklarer/Qwen3-ASR-1.7B-MLX-4bit) model weights | Apache-2.0 |
+| [Silero VAD](https://github.com/snakers4/silero-vad), [Core ML conversion](https://huggingface.co/FluidInference/silero-vad-coreml) (bundled) | MIT |
 
 The Parakeet-TDT 0.6B v3 weights are distributed by NVIDIA under
 [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/); using them requires crediting

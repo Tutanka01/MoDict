@@ -60,6 +60,10 @@ final class SettingsStore: ObservableObject {
     @Published var restoreClipboard: Bool {
         didSet { defaults.set(restoreClipboard, forKey: "restoreClipboard") }
     }
+    /// Add a space when dictated text would otherwise touch the text before the caret.
+    @Published var smartSpacing: Bool {
+        didSet { defaults.set(smartSpacing, forKey: "smartSpacing") }
+    }
     /// Language code like "en"/"fr", or "auto".
     @Published var languageHint: String {
         didSet { defaults.set(languageHint, forKey: "languageHint") }
@@ -78,15 +82,16 @@ final class SettingsStore: ObservableObject {
     @Published var inputDeviceUID: String {
         didSet { defaults.set(inputDeviceUID, forKey: "inputDeviceUID") }
     }
+    /// With System default, pass over a Bluetooth input: opening its microphone
+    /// drops the headset into low-quality call audio. Never affects a chosen device.
+    @Published var avoidBluetoothMicrophone: Bool {
+        didSet { defaults.set(avoidBluetoothMicrophone, forKey: "avoidBluetoothMicrophone") }
+    }
     @Published var hudPosition: HUDPosition {
         didSet { defaults.set(hudPosition.rawValue, forKey: "hudPosition") }
     }
     @Published var menuBarCost: MenuBarCost {
         didSet { defaults.set(menuBarCost.rawValue, forKey: "menuBarCost") }
-    }
-    /// Keep the audio engine running between dictations (faster start, permanent orange dot).
-    @Published var keepMicWarm: Bool {
-        didSet { defaults.set(keepMicWarm, forKey: "keepMicWarm") }
     }
     @Published var onboardingCompleted: Bool {
         didSet { defaults.set(onboardingCompleted, forKey: "onboardingCompleted") }
@@ -104,7 +109,7 @@ final class SettingsStore: ObservableObject {
                     try SMAppService.mainApp.unregister()
                 }
             } catch {
-                NSLog("MoDict: SMAppService failed: \(error)")
+                Log.app.error("SMAppService failed: \(error.localizedDescription, privacy: .public)")
                 launchAtLogin = SMAppService.mainApp.status == .enabled
             }
         }
@@ -120,6 +125,7 @@ final class SettingsStore: ObservableObject {
         playSounds = defaults.object(forKey: "playSounds") as? Bool ?? true
         hapticFeedback = defaults.object(forKey: "hapticFeedback") as? Bool ?? true
         restoreClipboard = defaults.object(forKey: "restoreClipboard") as? Bool ?? true
+        smartSpacing = defaults.object(forKey: "smartSpacing") as? Bool ?? true
         languageHint = defaults.string(forKey: "languageHint") ?? "auto"
         if let rawModel = defaults.string(forKey: "speechModel"),
            let savedModel = SpeechModel(rawValue: rawModel) {
@@ -132,6 +138,7 @@ final class SettingsStore: ObservableObject {
         }
         livePreview = defaults.object(forKey: "livePreview") as? Bool ?? true
         inputDeviceUID = defaults.string(forKey: "inputDeviceUID") ?? ""
+        avoidBluetoothMicrophone = defaults.object(forKey: "avoidBluetoothMicrophone") as? Bool ?? true
         if defaults.bool(forKey: Self.nearPointerMigrationKey) {
             hudPosition = HUDPosition(rawValue: defaults.string(forKey: "hudPosition") ?? "") ?? .nearPointer
         } else {
@@ -142,7 +149,6 @@ final class SettingsStore: ObservableObject {
             defaults.set(HUDPosition.nearPointer.rawValue, forKey: "hudPosition")
             defaults.set(true, forKey: Self.nearPointerMigrationKey)
         }
-        keepMicWarm = defaults.object(forKey: "keepMicWarm") as? Bool ?? false
         menuBarCost = MenuBarCost(rawValue: defaults.string(forKey: "menuBarCost") ?? "") ?? .iconOnly
         onboardingCompleted = defaults.bool(forKey: "onboardingCompleted")
         if let remaining = defaults.object(forKey: "gestureHintsRemaining") as? Int {

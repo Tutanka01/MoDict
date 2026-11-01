@@ -82,20 +82,13 @@ enum DictationKey: String, CaseIterable {
     }
 }
 
-/// Global dictation hotkey via a session-level `CGEventTap`.
+/// Global dictation hotkey. The controller's view of `HotkeyEventTaps` (the taps, on
+/// their own thread) and `HotkeyGestureMachine` (the rules).
 ///
-/// The tap listens for modifier changes (chosen key press/release) and key-downs
-/// (combo detection + Esc-to-cancel). It only ever *swallows* one event: Esc
-/// while dictation can still be cancelled. The dictation key is a bare modifier and
-/// is never swallowed, so combos like ⌘C keep working.
-///
-/// The `CGEventTapCallBack` is a C function pointer and cannot capture context;
-/// it recovers `self` from `userInfo` and hops onto the main actor. The run-loop
-/// source is added to the *main* run loop, so the callback already executes on
-/// the main thread — `MainActor.assumeIsolated` is therefore sound. Everything
-/// inside stays trivial (flip state, dispatch); the real work (`onBegin` etc.)
-/// is deferred to a later main-loop turn so a slow callback can never trip the
-/// tap's internal timeout.
+/// Only one event is ever swallowed: Esc while dictation can still be cancelled. The
+/// dictation key is a bare modifier and is never swallowed, so combos like ⌘C keep
+/// working. Callbacks arrive on the main queue, in the order the gestures happened,
+/// so heavy work (audio, HUD) never runs anywhere near a tap callback.
 @MainActor
 final class HotkeyMonitor {
 
@@ -105,18 +98,15 @@ final class HotkeyMonitor {
         case hybrid
     }
 
-    var mode: Mode = .hybrid
+    var mode: Mode {
+        get { taps.mode }
+        set { taps.mode = newValue }
+    }
     /// The modifier that triggers dictation. Changing it mid-session would strand a
     /// press whose release lives on the old key, so any live session is cancelled.
-    var key: DictationKey = .rightCommand {
-        didSet {
-            guard oldValue != key else { return }
-            if isSessionActive { cancelSession() }
-            keyDown = false
-            pressStartedSession = false
-            accidentalStart = false
-            handsFree = false
-        }
+    var key: DictationKey {
+        get { taps.key }
+        set { taps.feed(.triggerKeyChanged(newValue)) }
     }
     var onBegin: (() -> Bool)?
     var onEnd: (() -> Void)?
@@ -127,44 +117,29 @@ final class HotkeyMonitor {
     var onPermissionLost: (() -> Void)?
 
     /// True between `onBegin` and the matching `onEnd`/`onCancel`.
-    private(set) var isSessionActive = false
+    var isSessionActive: Bool { taps.isSessionActive }
+    /// `systemUptime` of the physical press behind the latest begin, which reaches the
+    /// main actor a start grace later at best.
+    var lastPressedAt: TimeInterval { taps.lastPressedAt }
 
-    // MARK: Tuning
+    let taps = HotkeyEventTaps()
+    /// Whether the controller took the session the last `.begin` opened. The tap thread
+    /// keeps going while main is busy, so a chord can be queued behind a begin that is
+    /// about to be refused; delivered, that cancel would hit a transcription in flight.
+    private var sessionAccepted = false
 
-    private static let escapeKeyCode: Int64 = 53               // kVK_Escape
-    /// A hold this long or longer counts as push-to-talk (release stops); a
-    /// briefer tap flips into hands-free/toggle.
-    private static let holdThreshold: TimeInterval = 0.5
-    /// A non-modifier key within this window of the press cancels the (accidental) start.
-    private static let interruptWindow: TimeInterval = 1.0
-    /// Minimum gap between two session *starts* (debounce).
-    private static let cooldown: TimeInterval = 0.4
-    private static let watchdogInterval: TimeInterval = 5.0
-    /// Contiguous virtual-keycode range of the modifier keys (⌘⌥⌃⇧, caps, fn).
-    private static let modifierKeyCodes: ClosedRange<Int64> = 54...63
+    init() {
+        taps.deliver = { [weak self] actions in
+            MainActor.assumeIsolated { self?.perform(actions) }
+        }
+        taps.permissionLost = { [weak self] in
+            MainActor.assumeIsolated { self?.onPermissionLost?() }
+        }
+    }
 
-    // MARK: Tap resources
-
-    private var tap: CFMachPort?
-    private var runLoopSource: CFRunLoopSource?
-    private var watchdog: Timer?
-
-    // MARK: Session state (mutated only on the main actor)
-
-    /// Right ⌘ is physically held.
-    private var keyDown = false
-    /// The current key-down opened a fresh session (so its release is meaningful).
-    private var pressStartedSession = false
-    /// Recording continues after release; the next press ends it (toggle / hybrid tap).
-    private var handsFree = false
-    /// The just-started session can still be cancelled by a combo key.
-    private var accidentalStart = false
-    /// `systemUptime` of the last successful start (hold measurement + combo window).
-    private var pressedAt: TimeInterval = 0
-    /// `systemUptime` of the last session start (cooldown gate).
-    private var lastSessionStart: TimeInterval = -.greatestFiniteMagnitude
-    /// Set by the controller; Esc is swallowed while recording or transcribing.
-    private var cancellationActive = false
+    deinit {
+        taps.stop()
+    }
 
     // MARK: Lifecycle
 
@@ -175,248 +150,47 @@ final class HotkeyMonitor {
         // dialog each time. Prompting belongs behind an explicit user action
         // (onboarding / settings button).
         guard CGPreflightListenEventAccess() else { return false }
-        if let tap, CGEvent.tapIsEnabled(tap: tap) { return true }
-        stop()   // tear down any stale/disabled tap first
-
-        let mask: CGEventMask =
-            (CGEventMask(1) << CGEventType.flagsChanged.rawValue) |
-            (CGEventMask(1) << CGEventType.keyDown.rawValue)
-
-        // Non-capturing: recovers `self` from `userInfo`, runs on the main thread.
-        let callback: CGEventTapCallBack = { _, type, event, refcon in
-            guard let refcon else { return Unmanaged.passUnretained(event) }
-            let monitor = Unmanaged<HotkeyMonitor>.fromOpaque(refcon).takeUnretainedValue()
-            return MainActor.assumeIsolated {
-                monitor.process(type: type, event: event)
-            }
-        }
-
-        guard let tap = CGEvent.tapCreate(
-            tap: .cgSessionEventTap,
-            place: .headInsertEventTap,
-            options: .defaultTap,             // must be able to swallow Esc
-            eventsOfInterest: mask,
-            callback: callback,
-            userInfo: Unmanaged.passUnretained(self).toOpaque()
-        ) else {
-            return false
-        }
-
-        let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
-        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
-        CGEvent.tapEnable(tap: tap, enable: true)
-
-        self.tap = tap
-        self.runLoopSource = source
-
-        // Backstop against a silently disabled/"inert" tap (see research pitfalls).
-        watchdog = Timer.scheduledTimer(withTimeInterval: Self.watchdogInterval, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.checkTapHealth() }
-        }
-        return true
+        return taps.start()
     }
 
     func stop() {
-        watchdog?.invalidate()
-        watchdog = nil
-        if let tap {
-            CGEvent.tapEnable(tap: tap, enable: false)
-            if let runLoopSource {
-                CFRunLoopRemoveSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
-            }
-            CFMachPortInvalidate(tap)
-        }
-        tap = nil
-        runLoopSource = nil
-        resetState()
+        taps.stop()
     }
 
     func setRecordingActive(_ active: Bool) {
-        cancellationActive = active
+        taps.feed(.recordingActive(active))
     }
 
-    // MARK: Event handling
-
-    /// Runs inside the tap callback on the main actor. Returns `nil` only to
-    /// swallow Esc while dictation is cancellable; every other event passes through untouched.
-    private func process(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
-        // Re-arm: the system disables the tap on timeout or certain input.
-        if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-            if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
-            resetPressed()
-            return Unmanaged.passUnretained(event)
-        }
-
-        let now = ProcessInfo.processInfo.systemUptime
-        let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
-
-        switch type {
-        case .flagsChanged:
-            if keyCode == key.keyCode {
-                // The device-dependent bit is specific to the chosen key: it clears
-                // on release even if the left-hand sibling modifier is still held.
-                let pressed = (event.flags.rawValue & key.flagMask) != 0
-                if pressed { handlePress(now) } else { handleRelease(now) }
-            }
-            return Unmanaged.passUnretained(event)   // never swallow a modifier
-
-        case .keyDown:
-            if keyCode == Self.escapeKeyCode, cancellationActive {
-                cancelSession()
-                return nil                            // the one and only swallowed event
-            }
-            if keyDown, accidentalStart, isSessionActive,
-               now - pressedAt <= Self.interruptWindow,
-               !Self.modifierKeyCodes.contains(keyCode) {
-                // A real keystroke during the grace window → this was a combo
-                // (e.g. ⌘C), not a dictation start. Cancel, but let the key through.
-                cancelSession()
-            }
-            return Unmanaged.passUnretained(event)
-
-        default:
-            return Unmanaged.passUnretained(event)
-        }
+    /// The controller ended the session by itself (mic failure, Pause, model switch).
+    /// Forgets it silently, so the next press starts fresh instead of "ending"
+    /// a hands-free session that no longer exists. No callback fires.
+    func abandonSession() {
+        taps.feed(.abandonSession)
     }
 
-    private func handlePress(_ now: TimeInterval) {
-        guard !keyDown else { return }   // dedupe repeated flagsChanged
-        keyDown = true
+    // MARK: Delivery
 
-        // A press while hands-free ends the running session (toggle / hybrid).
-        // This is not a start, so the cooldown must not block it.
-        if handsFree {
-            endSession()
-            return
-        }
-        guard !isSessionActive else { return }
-        guard now - lastSessionStart >= Self.cooldown else { return }
-
-        lastSessionStart = now
-        pressedAt = now
-        pressStartedSession = true
-        accidentalStart = true
-        beginSession()
-    }
-
-    private func handleRelease(_ now: TimeInterval) {
-        guard keyDown else { return }
-        keyDown = false
-
-        // Only act if this key-down opened a still-live, still-held session.
-        guard pressStartedSession, isSessionActive, !handsFree else {
-            accidentalStart = false
-            pressStartedSession = false
-            return
-        }
-        accidentalStart = false
-        let held = now - pressedAt
-
-        switch mode {
-        case .pushToTalk:
-            endSession()
-        case .toggle:
-            handsFree = true                 // keep recording; next press stops
-            pressStartedSession = false
-            fire(onHandsFree)
-        case .hybrid:
-            if held >= Self.holdThreshold {
-                endSession()                 // it was a hold → push-to-talk
-            } else {
-                handsFree = true             // brief tap → hands-free
-                pressStartedSession = false
-                fire(onHandsFree)
-            }
-        }
-    }
-
-    // MARK: Session transitions
-
-    private func beginSession() {
-        isSessionActive = true
-        fireBegin()
-    }
-
-    private func endSession() {
-        isSessionActive = false
-        handsFree = false
-        accidentalStart = false
-        pressStartedSession = false
-        fire(onEnd)
-    }
-
-    private func cancelSession() {
-        isSessionActive = false
-        handsFree = false
-        accidentalStart = false
-        pressStartedSession = false
-        fire(onCancel)
-    }
-
-    // MARK: Recovery
-
-    /// Clears "pressed" state after the tap was disabled — the release event was
-    /// likely missed, so a physically-held session is ended to avoid a stuck
-    /// recording. Hands-free sessions are left running; the re-armed tap will see
-    /// the next press.
-    private func resetPressed() {
-        let endHeldSession = keyDown && isSessionActive
-        keyDown = false
-        accidentalStart = false
-        pressStartedSession = false
-        if endHeldSession {
-            isSessionActive = false
-            handsFree = false
-            fire(onEnd)
-        }
-    }
-
-    private func resetState() {
-        keyDown = false
-        handsFree = false
-        accidentalStart = false
-        pressStartedSession = false
-        isSessionActive = false
-        cancellationActive = false
-    }
-
-    private func checkTapHealth() {
-        guard CGPreflightListenEventAccess() else {
-            resetState()
-            fire(onPermissionLost)
-            return
-        }
-        guard let tap else { return }
-        if !CGEvent.tapIsEnabled(tap: tap) {
-            CGEvent.tapEnable(tap: tap, enable: true)
-            resetPressed()
-        }
-    }
-
-    private func rejectBeginIfStillOptimistic() {
-        guard isSessionActive else { return }
-        isSessionActive = false
-        handsFree = false
-        accidentalStart = false
-        pressStartedSession = false
-    }
-
-    private func fireBegin() {
-        guard let onBegin else { return }
-        DispatchQueue.main.async { [weak self] in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                if !onBegin() {
-                    self.rejectBeginIfStillOptimistic()
+    private func perform(_ actions: [HotkeyGestureMachine.Action]) {
+        for action in actions {
+            switch action {
+            case .begin(let session):
+                // Already over (stop, abandon, chord): nothing is left to begin, and
+                // whatever followed it in the queue is dropped along with it.
+                sessionAccepted = taps.isLive(session: session) && (onBegin?() ?? false)
+                if !sessionAccepted {
+                    taps.feed(.beginRejected(session: session))
                 }
+            case .end:
+                if sessionAccepted { onEnd?() }
+            case .handsFree:
+                if sessionAccepted { onHandsFree?() }
+            case .cancel:
+                if sessionAccepted { onCancel?() }
+            case .cancelFromEscape:
+                onCancel?()
+            case .scheduleBegin, .cancelScheduledBegin, .swallowEvent:
+                break
             }
         }
-    }
-
-    /// Callbacks are deferred one main-loop turn so heavy work (audio, HUD) never
-    /// runs inside the tap callback.
-    private func fire(_ callback: (() -> Void)?) {
-        guard let callback else { return }
-        DispatchQueue.main.async { callback() }
     }
 }

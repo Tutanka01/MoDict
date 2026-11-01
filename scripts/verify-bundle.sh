@@ -104,6 +104,14 @@ else
     check "no embedded frameworks"
 fi
 
+# --- Voice detector -------------------------------------------------------------
+# The speech gate fails open without it: nothing breaks, and invented text from
+# holds without speech quietly comes back, so its absence must fail here.
+if ! ls -d "$app"/Contents/Resources/*.mlmodelc/weights/weight.bin >/dev/null 2>&1; then
+    fail "the bundle ships no voice detector model (Contents/Resources/*.mlmodelc)"
+fi
+check "voice detector model"
+
 # --- MLX Metal kernels ---------------------------------------------------------
 # MLX throws "Failed to load the default metallib" on the first kernel when no
 # kernel library is reachable: with an embedded Cmlx.framework MLX finds the
