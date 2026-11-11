@@ -8,7 +8,7 @@ struct SettingsStoreTests {
     @Test
     func defaultsUseExpectedValuesWhenDomainIsEmpty() {
         withEmptyDefaults { defaults in
-            let store = SettingsStore(defaults: defaults)
+            let store = SettingsStore(defaults: defaults, recommendedModel: .cohereTranscribe2B)
 
             #expect(store.hotkeyMode == .pushToTalk)
             #expect(store.dictationKey == .rightCommand)
@@ -16,8 +16,9 @@ struct SettingsStoreTests {
             #expect(store.hapticFeedback)
             #expect(store.restoreClipboard)
             #expect(store.languageHint == "auto")
-            #expect(store.speechModel == .parakeetV3)
-            #expect(defaults.string(forKey: "speechModel") == SpeechModel.parakeetV3.rawValue)
+            // A fresh install starts with the model recommended for this Mac.
+            #expect(store.speechModel == .cohereTranscribe2B)
+            #expect(defaults.string(forKey: "speechModel") == SpeechModel.cohereTranscribe2B.rawValue)
             #expect(store.inputDeviceUID == "")
             #expect(store.hudPosition == .nearPointer)
             #expect(store.avoidBluetoothMicrophone)
@@ -63,7 +64,7 @@ struct SettingsStoreTests {
         withEmptyDefaults { defaults in
             defaults.set(true, forKey: "onboardingCompleted")
 
-            let store = SettingsStore(defaults: defaults)
+            let store = SettingsStore(defaults: defaults, recommendedModel: .cohereTranscribe2B)
 
             #expect(store.speechModel == .parakeetV3)
             #expect(defaults.string(forKey: "speechModel") == SpeechModel.parakeetV3.rawValue)

@@ -117,7 +117,7 @@ final class SettingsStore: ObservableObject {
 
     private let defaults: UserDefaults
 
-    init(defaults: UserDefaults = .standard) {
+    init(defaults: UserDefaults = .standard, recommendedModel: SpeechModel = .recommended()) {
         self.defaults = defaults
         hasOpenRouterKey = OpenRouterKeyStore.hasKey
         hotkeyMode = HotkeyMonitor.Mode(rawValue: defaults.string(forKey: "hotkeyMode") ?? "") ?? .pushToTalk
@@ -131,10 +131,12 @@ final class SettingsStore: ObservableObject {
            let savedModel = SpeechModel(rawValue: rawModel) {
             speechModel = savedModel
         } else {
-            // Parakeet v3 is the default for fresh installs and for upgrades that
-            // never stored a choice: the smallest download, live preview included.
-            speechModel = .parakeetV3
-            defaults.set(SpeechModel.parakeetV3.rawValue, forKey: "speechModel")
+            // A fresh install starts with the recommended model. An upgrade that
+            // never stored a choice has been dictating with Parakeet and keeps it:
+            // a new model is a download the user did not ask for.
+            let model: SpeechModel = defaults.bool(forKey: "onboardingCompleted") ? .parakeetV3 : recommendedModel
+            speechModel = model
+            defaults.set(model.rawValue, forKey: "speechModel")
         }
         livePreview = defaults.object(forKey: "livePreview") as? Bool ?? true
         inputDeviceUID = defaults.string(forKey: "inputDeviceUID") ?? ""

@@ -233,10 +233,13 @@ enum UsageFormat {
         return formatted(value, digits: 4, locale: locale)
     }
 
+    /// The narrow symbol everywhere: outside the United States the standard one
+    /// is "$US", and the labels beside these amounts already say USD.
     private static func formatted(_ value: Decimal, digits: Int, locale: Locale) -> String {
         value.formatted(
             Decimal.FormatStyle.Currency(code: "USD")
                 .locale(locale)
+                .presentation(.narrow)
                 .precision(.fractionLength(digits))
         )
     }

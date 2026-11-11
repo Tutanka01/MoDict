@@ -52,6 +52,7 @@ Chemins a connaitre:
   MLX embarque);
 - cache modele Parakeet/FluidAudio: `~/Library/Application Support/FluidAudio/Models/parakeet-tdt-0.6b-v3`;
 - cache modele Qwen3-ASR: `~/Library/Application Support/MoDict/Models/qwen3-asr-1.7b-4bit`;
+- cache modele Cohere Transcribe: `~/Library/Application Support/MoDict/Models/cohere-transcribe-2b-5bit`;
 - preferences: `~/Library/Preferences/com.modict.app.plist`.
 
 ## Preparation machine QA
@@ -169,7 +170,8 @@ security find-identity -v -p codesigning
 - [ ] Microphone: demande systeme, refus puis re-autorisation testees.
 - [ ] Keyboard access: Accessibility et Input Monitoring sont deux cartes separees, avec
   statut qui se met a jour sans redemarrage inutile.
-- [ ] Speech model sans cache: Parakeet v3 preselectionne (badge Recommended), bouton
+- [ ] Speech model sans cache: le modele recommande pour ce Mac est preselectionne (badge
+  Recommended: Cohere Transcribe a partir de 16 Go de memoire, Parakeet v3 en dessous), bouton
   `Download and continue` demarre le telechargement et passe a l'etape suivante sans attendre.
 - [ ] Telechargement en arriere-plan: sur Microphone et Access, le bandeau montre
   checking/downloading N%/preparing, puis `is ready`; reseau coupe: `setup stopped` + `Retry`.
@@ -190,12 +192,26 @@ security find-identity -v -p codesigning
 - [ ] Reouverture apres retrait d'une permission ou suppression du modele: onboarding
   revient sur le chemin de remediation.
 
-## Modeles (Qwen3-ASR / Parakeet v3)
+## Modeles (Cohere Transcribe / Parakeet v3 / Qwen3-ASR)
 
 - [ ] Installation fraiche: `defaults delete com.modict.app`, caches absents, `make run`:
-  Parakeet v3 est le modele actif par defaut dans Settings > Model et l'onboarding.
+  le modele recommande pour ce Mac est actif par defaut dans Settings > Model et l'onboarding.
 - [ ] Mise a niveau d'une installation existante (preferences conservees, cache Parakeet
-  present): le modele actif reste Parakeet, aucun telechargement Qwen ne demarre tout seul.
+  present): le modele actif reste Parakeet, aucun telechargement ne demarre tout seul.
+- [ ] Cohere actif, memoire: au repos depuis plus d'une minute, `footprint -p $(pgrep -x MoDict)`
+  reste sous 300 Mo; pendant une dictee il monte vers 2 a 2,8 Go; une minute apres la derniere
+  dictee il est redescendu.
+- [ ] Cohere actif, apres plus d'une minute de repos: une dictee de 3 s ou plus est collee sans
+  attente perceptible (le modele se charge pendant qu'on parle); un seul mot dicte peut
+  attendre environ une seconde.
+- [ ] Cohere actif, Live preview active: les premiers mots apparaissent apres environ 1 s, puis
+  une mise a jour par seconde; le texte colle est celui qu'on lisait, a quelques mots pres.
+  Maintenir la touche sans parler dans une piece bruyante: aucun mot ne s'affiche.
+- [ ] Cohere actif, Language sur Automatic, Mac en francais: une phrase dictee en anglais est
+  mal transcrite (attendu: le modele ne detecte pas la langue); choisir English dans
+  Settings > Dictation la transcrit correctement. Le pied de section le dit.
+- [ ] Cohere actif, hors ligne: lancer l'app et dicter fonctionne (aucun acces reseau pour
+  recharger le modele).
 - [ ] Carte `Current model`: elle reflete le modele actif (nom, local/cloud, `Audio stays on
   this Mac` ou `Transcription via OpenRouter`) et se met a jour au changement de modele.
 - [ ] Bouton `Use` d'une ligne locale deja telechargee: le modele se charge (`Checking…` puis
@@ -221,8 +237,8 @@ security find-identity -v -p codesigning
   Game of Thrones) restent ecrits en anglais; latence inchangee a l'oreille.
 - [ ] Parakeet actif, langue Anglais: une phrase anglaise est transcrite en anglais normal
   (le pilotage francais ne s'applique qu'en francais).
-- [ ] Baseline d'espace disque: ~2.3 Go pour Qwen, ~482 Mo pour Parakeet, liberes par
-  `Delete`.
+- [ ] Baseline d'espace disque: ~1.7 Go pour Cohere, ~2.3 Go pour Qwen, ~482 Mo pour Parakeet,
+  liberes par `Delete`.
 
 ## OpenRouter (optionnel)
 

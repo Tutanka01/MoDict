@@ -8,9 +8,11 @@ local or OpenRouter model transcribes → text is inserted at the cursor of what
   `make` assembles the `.app` bundle, embeds `Cmlx.framework` and the
   `disable-library-validation` entitlement, and `make verify-bundle` proves the
   result launches.
-- STT: FluidAudio 0.15.7 with Parakeet-TDT 0.6B v3 (new-install default: smaller, ANE,
-  live preview), or Qwen3-ASR 1.7B 4-bit through speech-swift/MLX, or
-  one of three opt-in OpenRouter speech models (batch only).
+- STT: Cohere Transcribe 2B 5-bit through speech-swift/MLX (recommended from 16 GB of
+  memory: most accurate, loaded only while dictating, own live preview), FluidAudio 0.15.7
+  with Parakeet-TDT 0.6B v3 (light, ANE, live preview; the default below 16 GB), Qwen3-ASR
+  1.7B 4-bit through speech-swift/MLX, or one of three opt-in OpenRouter speech models
+  (batch only). Measurements: `Docs/research/french-engine-comparison.md`.
 - No sandbox (CGEvent posting + global key monitoring are incompatible with it).
 
 ## Module map & file ownership
@@ -54,6 +56,7 @@ Sources/MoDict/
 │       ├── FrenchSteeringGuard.swift [stt] encoder fingerprint: steering only on its own encoder
 │       ├── SpeechGate.swift          [stt] drops captures without speech before any engine
 │       ├── QwenAudioEngine.swift     [stt] speech-swift/Qwen3-ASR implementation
+│       ├── CohereAudioEngine.swift   [stt] speech-swift/Cohere Transcribe: on-demand weights, own preview
 │       └── OpenRouterEngine.swift    [stt] HTTPS batch transcription, in-memory WAV
 └── UI/
     ├── Theme.swift               [core]    design tokens (see Docs/DESIGN.md)
@@ -243,12 +246,15 @@ Implementation notes (validated against FluidAudio 0.15.7 source — README snip
 ```swift
 /// The models exposed in Settings. Raw values are persisted in UserDefaults — stable.
 enum SpeechModel: String, CaseIterable, Identifiable, Sendable {
+    case cohereTranscribe2B = "cohere-transcribe-2b-5bit"
     case qwen3ASR1_7B = "qwen3-asr-1.7b-4bit"
-    case parakeetV3   = "parakeet-v3"           // default for fresh installs and upgrades
+    case parakeetV3   = "parakeet-v3"
     case maiTranscribe2 = "microsoft/mai-transcribe-2"
     case museVoiceTranscribe = "meta/muse-voice-transcribe-1.0"
     case gptTranscribe = "openai/gpt-transcribe"
     var isCloud: Bool
+    var streamsOwnPreview: Bool            // Parakeet, Cohere
+    static func recommended(physicalMemory:) -> SpeechModel   // Cohere from 16 GB, else Parakeet
     var displayName / detail / attribution: String
     var approximateDownloadBytes: Int64
     var modelsDirectory: URL?              // nil for cloud models
@@ -256,9 +262,33 @@ enum SpeechModel: String, CaseIterable, Identifiable, Sendable {
 }
 ```
 
-`SettingsStore.speechModel` resolves to the stored choice, or `.parakeetV3` when none was
-stored (fresh install, or an upgrade that never picked one, which must not silently pull
-~2.3 GB).
+`SettingsStore.speechModel` resolves to the stored choice. With none stored, a fresh install
+gets `SpeechModel.recommended()`, and an upgrade that never picked one keeps `.parakeetV3`: it
+must not silently pull a new model.
+
+### CohereAudioEngine [stt] — `CohereAudioEngine.swift`
+
+```swift
+actor CohereAudioEngine: TranscriptionEngine {
+    static let modelID = "aufklarer/Cohere-Transcribe-2B-MLX-5bit"
+    static let idleSeconds: TimeInterval            // 60: weights released after this
+    static let supportedLanguageCodes: Set<String>  // 14; the model never detects one
+    init(hasVoice: @escaping @Sendable ([Float]) async -> Bool = { _ in true })
+    var isLoaded: Bool { get }                      // weights in memory right now
+    static func language(for hint: String?, preferredLanguages:) -> String
+}
+```
+
+- `isReady` means the files are on disk, not that the weights are in memory. `prepare()` loads
+  them only after a fresh download. `wake()` (called by `startDictation`) and every decode load
+  them from disk when needed, never from the network, and rearm the release timer. `unload()`
+  and the timer replace the module's arrays with empty ones and clear MLX's buffer cache:
+  dropping the model object alone frees nothing.
+- MLX's buffer cache is capped at 256 MB while the weights are loaded and restored after.
+- `startStreamingSession` returns a preview that decodes the audio so far again once a second
+  (`CohereLivePreview`, `PreviewStabilizer`), settles the part before a pause past 18 s, and
+  asks `hasVoice` (the controller's `SpeechGate`) before its first decode. It is preview-only:
+  `finish()` throws, and the final text is one pass over the whole utterance.
 
 ### QwenAudioEngine [stt] — `QwenAudioEngine.swift`
 
@@ -654,9 +684,9 @@ relaunch before it ends reopens setup at the model step. On finish the view sets
   flight, vocabulary applied, nil whenever none is running),
   `activate()` (start hotkey + prepare engine), `deactivate()`,
   `prepareEngine()` (download+load the selected model when it is not ready),
-  `preparePreviewEngine()` (load Parakeet as the preview engine for models that don't stream,
-  when `settings.livePreview` is on and its model is on disk; never downloads; unloads it
-  otherwise),
+  `preparePreviewEngine()` (load Parakeet as the preview engine for models that don't write
+  their own preview, when `settings.livePreview` is on and its model is on disk; never
+  downloads; unloads it otherwise),
   `downloadModel(_:)`, `selectModel(_:)`, `deleteModel(_:)`, `modelState(for:)`
   (per-model state for Settings), plus `modelStates`, `isManagingModel`, `setDictationEnabled(_:)`,
   `startDictation() -> Bool` (false when the begin
@@ -669,8 +699,11 @@ relaunch before it ends reopens setup at the model step. On finish the view sets
   `SpeechGate` (loudest 30 ms window under −60 dBFS, then Silero under 0.4 on captures up to 10 s) runs
   before any engine, so a hold without speech costs nothing and reaches no cloud. It fails open and
   has a 1.5 s budget. The model ships in `Contents/Resources` (Support/Models), pinned, with no network.
+  `startDictation` also calls `wake()` on the selected engine, so one that released its
+  weights loads them while the user speaks.
   Streaming: `startDictation` opens a best-effort preview session on the preview engine (the
-  selected engine when it streams, otherwise Parakeet when Live preview is on and downloaded;
+  selected engine when it writes its own preview, otherwise Parakeet when Live preview is on
+  and downloaded;
   mic `onChunk` → session;
   `StreamingTranscriptAssembler` merges overlapping hypotheses into a cumulative document;
   updates hop to the main actor, drop when the recordingID is stale, get vocabulary applied,

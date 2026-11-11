@@ -52,7 +52,9 @@ let package = Package(
             dependencies: [
                 .product(name: "FluidAudio", package: "FluidAudio"),
                 .product(name: "Qwen3ASR", package: "speech-swift"),
-                .product(name: "MLX", package: "mlx-swift")
+                .product(name: "CohereTranscribeASR", package: "speech-swift"),
+                .product(name: "MLX", package: "mlx-swift"),
+                .product(name: "MLXNN", package: "mlx-swift")
             ],
             path: "Sources/MoDict",
             swiftSettings: [

@@ -314,8 +314,15 @@ private struct SettingsDictationTab: View {
             Section {
                 Picker("Language", selection: $settings.languageHint) {
                     Text("Automatic").tag("auto")
-                    ForEach(FluidAudioEngine.supportedLanguages, id: \.code) { language in
+                    ForEach(languages, id: \.code) { language in
                         Text(language.name).tag(language.code)
+                    }
+                    // Keep a language chosen for another model selectable and say
+                    // what happens to it, instead of an empty picker.
+                    if settings.languageHint != "auto",
+                       !languages.contains(where: { $0.code == settings.languageHint }) {
+                        Text("\(Self.name(of: settings.languageHint)) — not in \(settings.speechModel.displayName)")
+                            .tag(settings.languageHint)
                     }
                 }
 
@@ -338,7 +345,7 @@ private struct SettingsDictationTab: View {
             } header: {
                 Text("Input")
             } footer: {
-                Text("Automatic follows your Mac's language when MoDict supports it. Pinning the language you speak helps MoDict avoid decoding in another one.")
+                Text(languageFooter)
             }
 
             Section {
@@ -364,9 +371,31 @@ private struct SettingsDictationTab: View {
         .onAppear { inputDevices = MicrophoneCapture.availableInputDevices() }
     }
 
+    /// Cohere writes fourteen languages; the other models are offered Parakeet's list.
+    private var languages: [(code: String, name: String)] {
+        guard settings.speechModel == .cohereTranscribe2B else { return FluidAudioEngine.supportedLanguages }
+        return CohereAudioEngine.supportedLanguageCodes
+            .map { (code: $0, name: Self.name(of: $0)) }
+            .sorted { $0.name < $1.name }
+    }
+
+    private static func name(of code: String) -> String {
+        Locale(identifier: "en").localizedString(forLanguageCode: code) ?? code
+    }
+
+    private var languageFooter: String {
+        if settings.speechModel == .cohereTranscribe2B {
+            return "Cohere Transcribe writes one language at a time and does not detect it. Automatic uses your Mac's language; choose another here before dictating in it."
+        }
+        return "Automatic follows your Mac's language when MoDict supports it. Pinning the language you speak helps MoDict avoid decoding in another one."
+    }
+
     private var livePreviewFooter: String {
         if settings.speechModel == .parakeetV3 {
             return "Parakeet shows your words as you speak."
+        }
+        if settings.speechModel == .cohereTranscribe2B {
+            return "Cohere Transcribe shows your words as you speak, on this Mac: what you read is what will be pasted."
         }
         guard SpeechModel.parakeetV3.isDownloaded else {
             return "Download Parakeet in Model to see your words as you speak. The pasted text still comes from \(settings.speechModel.displayName)."
@@ -554,7 +583,8 @@ private struct SettingsModelTab: View {
             } header: {
                 Text("On this Mac")
             } footer: {
-                Text(SpeechModel.localModels.map(\.attribution).joined(separator: "\n"))
+                Text("Cohere Transcribe loads when you start dictating and leaves memory a minute after you stop.\n"
+                     + SpeechModel.localModels.map(\.attribution).joined(separator: "\n"))
             }
 
             Section("OpenRouter API key") {
@@ -751,8 +781,19 @@ private struct ModelManagementRow: View {
                     .font(.system(size: 18, weight: .medium))
                     .frame(width: 28)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(model.displayName)
-                        .font(.body.weight(.medium))
+                    HStack(spacing: 6) {
+                        Text(model.displayName)
+                            .font(.body.weight(.medium))
+                        if model == SpeechModel.recommended() {
+                            Text("RECOMMENDED")
+                                .font(.system(size: 8.5, weight: .semibold))
+                                .tracking(0.6)
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Color.primary.opacity(0.07), in: Capsule())
+                        }
+                    }
                     Text("\(model.detail) · ≈ \(sizeText)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -979,6 +1020,8 @@ private struct SettingsAboutTab: View {
                 Text("Parakeet-TDT 0.6B v3 — CC-BY-4.0 · NVIDIA")
                     .foregroundStyle(.secondary)
                 Text("speech-swift and Qwen3-ASR 1.7B — Apache-2.0")
+                    .foregroundStyle(.secondary)
+                Text("Cohere Transcribe 03-2026 — Apache-2.0 · Cohere")
                     .foregroundStyle(.secondary)
             } header: {
                 Text("Licenses")

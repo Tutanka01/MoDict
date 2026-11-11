@@ -17,14 +17,16 @@ superwhisper, built to disappear until you need it.
 
 - **Private by default.** The local models transcribe on your Mac. Selecting a cloud
   model sends each finished recording to OpenRouter and its model provider.
-- **Fast and French-ready by default.** New installations use Parakeet v3 on the Neural
-  Engine: a small download, live preview, and steering so spontaneous French no longer
-  slides into English. Qwen3-ASR 1.7B (MLX) stays one click away for the strongest
-  multilingual and French transcription.
+- **Accurate in French, and light at rest.** On Macs with 16 GB or more, new installations
+  use Cohere Transcribe: on French talks it makes about a third fewer word errors than
+  Parakeet v3, and half as many on long dictations
+  ([measurements](Docs/research/french-engine-comparison.md)). Its weights load when you
+  start dictating and leave memory a minute after you stop. Parakeet v3 on the Neural
+  Engine is the light alternative, and the default on smaller Macs.
 - **Setup that doesn't wait.** The model downloads in the background while you grant
   permissions, and you can finish setup before the download ends.
-- **Choose your model.** Manage Qwen3-ASR and Parakeet locally, or select one of three
-  optional OpenRouter transcription models in Settings → Model.
+- **Choose your model.** Manage Cohere Transcribe, Parakeet and Qwen3-ASR locally, or select
+  one of three optional OpenRouter transcription models in Settings → Model.
 - **It stays out of the way.** A small preview hangs just below your text cursor, where
   the words will land, and vanishes the instant the text lands. No dashboard, no Dock
   icon — just a menu bar glyph.
@@ -33,7 +35,9 @@ superwhisper, built to disappear until you need it.
 
 - macOS 15 (Sequoia) or later
 - Apple Silicon
-- ~482 MB of disk for the default Parakeet v3 model (~2.3 GB for Qwen3-ASR)
+- ~1.7 GB of disk for Cohere Transcribe, ~482 MB for Parakeet v3 (~2.3 GB for Qwen3-ASR)
+- Cohere Transcribe uses about 2.8 GB of memory while a dictation runs and none at rest;
+  Parakeet v3 about 150 MB
 
 ## Install
 
@@ -125,7 +129,7 @@ and your account privacy settings before using it with sensitive speech. Usage c
 incur charges. Cloud recordings are limited to 10 minutes. Cloud models don't stream a
 live preview; when Parakeet is downloaded and Live preview is on, Parakeet transcribes the
 preview on your Mac, and the pasted text still comes from the cloud model. Switching back
-to Qwen3-ASR or Parakeet keeps subsequent audio local.
+to a local model keeps subsequent audio local.
 
 MoDict tracks what cloud dictation costs. Every OpenRouter response reports the exact
 charge for that request, and MoDict keeps a local ledger of dictations, durations and
@@ -163,9 +167,9 @@ transcriptions live in the menu bar popover; click one to copy it again.
 
 1. A `CGEventTap` watches the right ⌘ key and starts capturing 16 kHz mono audio through
    `AVAudioEngine`.
-2. While you speak, the HUD shows your voice just below the text cursor. Parakeet streams a
-   live text preview, also for Qwen3-ASR and cloud models when it is downloaded and Live
-   preview is on.
+2. While you speak, the HUD shows your voice just below the text cursor. Cohere Transcribe
+   and Parakeet write their own live preview; for Qwen3-ASR and cloud models, Parakeet writes
+   it when it is downloaded and Live preview is on.
 3. On release, the selected model transcribes the full clip once. A cloud model
    sends the recording to OpenRouter only at this point.
 4. The text is placed on the pasteboard, pasted with a synthetic ⌘V at your cursor, and
@@ -216,6 +220,7 @@ MoDict builds on the work of others; attribution is required:
 | [speech-swift](https://github.com/soniqo/speech-swift) | Apache-2.0 |
 | [MLX](https://github.com/ml-explore/mlx) (runtime and Metal kernels) | MIT |
 | [Qwen3-ASR 1.7B](https://huggingface.co/aufklarer/Qwen3-ASR-1.7B-MLX-4bit) model weights | Apache-2.0 |
+| [Cohere Transcribe 03-2026](https://huggingface.co/CohereLabs/cohere-transcribe-03-2026), [MLX 5-bit conversion](https://huggingface.co/aufklarer/Cohere-Transcribe-2B-MLX-5bit) | Apache-2.0 — © Cohere |
 | [Silero VAD](https://github.com/snakers4/silero-vad), [Core ML conversion](https://huggingface.co/FluidInference/silero-vad-coreml) (bundled) | MIT |
 
 The Parakeet-TDT 0.6B v3 weights are distributed by NVIDIA under

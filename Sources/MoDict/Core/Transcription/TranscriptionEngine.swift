@@ -2,21 +2,40 @@ import Foundation
 
 /// Speech models exposed in Settings. The raw value is persisted, so it must stay stable.
 enum SpeechModel: String, CaseIterable, Identifiable, Sendable {
+    case cohereTranscribe2B = "cohere-transcribe-2b-5bit"
     case qwen3ASR1_7B = "qwen3-asr-1.7b-4bit"
     case parakeetV3 = "parakeet-v3"
     case maiTranscribe2 = "microsoft/mai-transcribe-2"
     case museVoiceTranscribe = "meta/muse-voice-transcribe-1.0"
     case gptTranscribe = "openai/gpt-transcribe"
 
-    static let localModels: [SpeechModel] = [.qwen3ASR1_7B, .parakeetV3]
+    static let localModels: [SpeechModel] = [.cohereTranscribe2B, .parakeetV3, .qwen3ASR1_7B]
     static let cloudModels: [SpeechModel] = [.maiTranscribe2, .museVoiceTranscribe, .gptTranscribe]
 
     var isCloud: Bool { Self.cloudModels.contains(self) }
+
+    /// Below this much memory, the 2.8 GB Cohere needs while a dictation runs is
+    /// too large a share of the Mac.
+    private static let comfortableMemoryBytes: UInt64 = 16 << 30
+
+    /// The model to start with. Measured on French speech with human references
+    /// (Docs/research/french-engine-comparison.md), Cohere makes about a third
+    /// fewer word errors than Parakeet, and half as many on long dictations.
+    static func recommended(
+        physicalMemory: UInt64 = ProcessInfo.processInfo.physicalMemory
+    ) -> SpeechModel {
+        physicalMemory >= comfortableMemoryBytes ? .cohereTranscribe2B : .parakeetV3
+    }
+
+    /// Shows its own words while the user speaks. The others borrow Parakeet
+    /// for the preview.
+    var streamsOwnPreview: Bool { self == .parakeetV3 || self == .cohereTranscribe2B }
 
     var id: String { rawValue }
 
     var displayName: String {
         switch self {
+        case .cohereTranscribe2B: "Cohere Transcribe"
         case .qwen3ASR1_7B: "Qwen3-ASR 1.7B"
         case .parakeetV3: "Parakeet v3"
         case .maiTranscribe2: "MAI-Transcribe 2"
@@ -27,8 +46,9 @@ enum SpeechModel: String, CaseIterable, Identifiable, Sendable {
 
     var detail: String {
         switch self {
-        case .qwen3ASR1_7B: "Best French quality · MLX · 4-bit"
-        case .parakeetV3: "Fast · Neural Engine · live preview"
+        case .cohereTranscribe2B: "Most accurate · live preview · memory freed when idle"
+        case .qwen3ASR1_7B: "Takes vocabulary hints · about 7 GB of memory"
+        case .parakeetV3: "Lightest and fastest · live preview"
         case .maiTranscribe2: "Microsoft · multilingual"
         case .museVoiceTranscribe: "Meta · up to 10 minutes"
         case .gptTranscribe: "OpenAI · high accuracy"
@@ -37,6 +57,7 @@ enum SpeechModel: String, CaseIterable, Identifiable, Sendable {
 
     var approximateDownloadBytes: Int64 {
         switch self {
+        case .cohereTranscribe2B: CohereAudioEngine.approximateDownloadBytes
         case .qwen3ASR1_7B: QwenAudioEngine.approximateDownloadBytes
         case .parakeetV3: FluidAudioEngine.approximateDownloadBytes
         case .maiTranscribe2, .museVoiceTranscribe, .gptTranscribe: 0
@@ -45,6 +66,7 @@ enum SpeechModel: String, CaseIterable, Identifiable, Sendable {
 
     var modelsDirectory: URL? {
         switch self {
+        case .cohereTranscribe2B: CohereAudioEngine.modelsDirectory
         case .qwen3ASR1_7B: QwenAudioEngine.modelsDirectory
         case .parakeetV3: FluidAudioEngine.modelsDirectory
         case .maiTranscribe2, .museVoiceTranscribe, .gptTranscribe: nil
@@ -53,6 +75,7 @@ enum SpeechModel: String, CaseIterable, Identifiable, Sendable {
 
     var isDownloaded: Bool {
         switch self {
+        case .cohereTranscribe2B: CohereAudioEngine.modelsExistOnDisk()
         case .qwen3ASR1_7B: QwenAudioEngine.modelsExistOnDisk()
         case .parakeetV3: FluidAudioEngine.modelsExistOnDisk()
         case .maiTranscribe2, .museVoiceTranscribe, .gptTranscribe: false
@@ -61,6 +84,7 @@ enum SpeechModel: String, CaseIterable, Identifiable, Sendable {
 
     var attribution: String {
         switch self {
+        case .cohereTranscribe2B: "Cohere Transcribe 03-2026 (Apache-2.0) · speech-swift (Apache-2.0)"
         case .qwen3ASR1_7B: "Qwen3-ASR 1.7B (Apache-2.0) · speech-swift (Apache-2.0)"
         case .parakeetV3: "NVIDIA Parakeet-TDT 0.6B v3 (CC-BY-4.0) · FluidAudio (Apache-2.0)"
         case .maiTranscribe2, .museVoiceTranscribe, .gptTranscribe: "Cloud service via OpenRouter"
@@ -151,11 +175,15 @@ protocol TranscriptionEngine: Actor {
         onPartial: @escaping @Sendable (PartialTranscript) -> Void
     ) -> StreamingTranscriptionSession?
     func unload() async
+    /// A dictation is starting. Engines that release their weights between
+    /// dictations load them again here, while the user speaks.
+    func wake() async
     /// Terms the user wants spelled their way, for engines that take a decoding
     /// prompt. Others ignore them (see the default below).
     func setVocabularyHints(_ terms: [String]) async
 }
 
 extension TranscriptionEngine {
+    func wake() async {}
     func setVocabularyHints(_ terms: [String]) async {}
 }

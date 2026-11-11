@@ -212,7 +212,7 @@ struct OnboardingModelStep: View {
                         OnboardingModelRow(
                             model: item,
                             selected: item == model,
-                            recommended: item == .parakeetV3,
+                            recommended: item == SpeechModel.recommended(),
                             trailing: trailingText(for: item),
                             locked: controller.isManagingModel
                         ) { choose(item) }

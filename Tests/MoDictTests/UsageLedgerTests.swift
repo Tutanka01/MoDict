@@ -186,5 +186,12 @@ struct UsageLedgerTests {
         #expect(UsageFormat.cost(usd("0.0121"), locale: locale) == "$0.012")
         #expect(UsageFormat.cost(usd("1.24"), locale: locale) == "$1.24")
         #expect(UsageFormat.cost(usd("1234.5"), locale: locale) == "$1,234.50")
+
+        // A French Mac writes the number its own way, with a plain dollar sign:
+        // "$US" beside a label that already says USD read as "0,05 $US USD".
+        let french = UsageFormat.cost(usd("0.052"), locale: Locale(identifier: "fr_FR"))
+        #expect(french.hasPrefix("0,052"))
+        #expect(french.hasSuffix("$"))
+        #expect(!french.contains("US"))
     }
 }

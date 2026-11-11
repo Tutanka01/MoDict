@@ -181,11 +181,12 @@ final class DictationController: ObservableObject {
     private let microphone: MicrophoneCapture
     private let fluidAudioEngine: FluidAudioEngine
     private let qwenAudioEngine: QwenAudioEngine
+    private let cohereAudioEngine: CohereAudioEngine
     private let cloudEngines: [SpeechModel: OpenRouterEngine]
     private let inserter: TextInserter
     private let hud: HUDController
     private let sounds: SoundFeedback
-    private let speechGate = SpeechGate()
+    private let speechGate: SpeechGate
     private let idleSleep = IdleSleepGuard()
 
     /// Identity of the recording in flight; async completions compare against it
@@ -225,6 +226,11 @@ final class DictationController: ObservableObject {
         self.microphone = MicrophoneCapture()
         self.fluidAudioEngine = FluidAudioEngine()
         self.qwenAudioEngine = QwenAudioEngine()
+        let speechGate = SpeechGate()
+        self.speechGate = speechGate
+        self.cohereAudioEngine = CohereAudioEngine(hasVoice: { samples in
+            await speechGate.evaluate(samples) == .speech
+        })
         self.cloudEngines = Dictionary(uniqueKeysWithValues: SpeechModel.cloudModels.map {
             ($0, OpenRouterEngine(model: $0))
         })
@@ -453,6 +459,7 @@ final class DictationController: ObservableObject {
             do {
                 switch model {
                 case .qwen3ASR1_7B: try QwenAudioEngine.deleteModels()
+                case .cohereTranscribe2B: try CohereAudioEngine.deleteModels()
                 case .parakeetV3:
                     if FileManager.default.fileExists(atPath: FluidAudioEngine.modelsDirectory.path) {
                         try FileManager.default.removeItem(at: FluidAudioEngine.modelsDirectory)
@@ -481,6 +488,7 @@ final class DictationController: ObservableObject {
     private func engine(for model: SpeechModel) -> any TranscriptionEngine {
         switch model {
         case .qwen3ASR1_7B: qwenAudioEngine
+        case .cohereTranscribe2B: cohereAudioEngine
         case .parakeetV3: fluidAudioEngine
         case .maiTranscribe2, .museVoiceTranscribe, .gptTranscribe: cloudEngines[model]!
         }
@@ -491,22 +499,23 @@ final class DictationController: ObservableObject {
     }
 
     /// The engine streaming the live preview: the selected one when it streams
-    /// (Parakeet); otherwise Parakeet running on this Mac for the preview
+    /// (Parakeet, Cohere); otherwise Parakeet running on this Mac for the preview
     /// only, when Live preview is on and its model is on disk. Preview-only
     /// either way: the paste always comes from the selected engine's batch pass.
     private var previewEngine: (any TranscriptionEngine)? {
         if settings.speechModel == .parakeetV3 { return fluidAudioEngine }
-        guard settings.livePreview, SpeechModel.parakeetV3.isDownloaded else { return nil }
-        return fluidAudioEngine
+        guard settings.livePreview else { return nil }
+        if settings.speechModel.streamsOwnPreview { return selectedEngine }
+        return SpeechModel.parakeetV3.isDownloaded ? fluidAudioEngine : nil
     }
 
     /// Loads (or releases) Parakeet as the preview engine for models that
-    /// don't stream. Never downloads: without the model on disk there is
+    /// don't show their own words. Never downloads: without the model on disk there is
     /// simply no preview. Safe to call repeatedly.
     func preparePreviewEngine() {
         guard settings.speechModel != .parakeetV3, !isManagingModel else { return }
         let engine = fluidAudioEngine
-        if settings.livePreview, SpeechModel.parakeetV3.isDownloaded {
+        if settings.livePreview, !settings.speechModel.streamsOwnPreview, SpeechModel.parakeetV3.isDownloaded {
             Task { try? await engine.prepare { _ in } }
         } else {
             Task { await engine.unload() }
@@ -531,6 +540,8 @@ final class DictationController: ObservableObject {
         // Retries a failed download at the next dictation, and covers a first
         // dictation reached through setup, before `activate()` has run.
         Task { await speechGate.prepare() }
+        // An engine that released its weights loads them again while the user speaks.
+        Task { [engine = selectedEngine] in await engine.wake() }
 
         let recordingID = UUID()
         currentRecordingID = recordingID

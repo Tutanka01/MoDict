@@ -18,6 +18,13 @@ state, UI, permission or instance lock exists. It uses the real engine, `SpeechG
 speech model. `MODICT_BENCH_OUT`, `MODICT_BENCH_MODEL` and `MODICT_BENCH_PASSES` (default 3)
 complete it. The first decode is a warm-up and excluded.
 
+It ends with a `load` row: the time to load the model and to load it again after unloading,
+and the process footprint loaded, after the decodes and two seconds after unloading. With
+`MODICT_BENCH_PREVIEW=1` it also plays every clip to the engine's live preview in real time and
+writes a `preview` row per clip: updates, time to the first one, longest gap, and how many
+words of the final text differ from the last preview. Clips with `expect_speech: false` count
+as failures when their preview shows any word. This takes as long as the audio lasts.
+
 MoDict writes no transcript to disk in normal use. This mode writes them only to the output
 path a developer asks for: delete the file when done, and never put real recordings or
 results in the repository.

@@ -50,8 +50,8 @@ struct MenuBarView: View {
                     Button { showSettings(.usage) } label: {
                         MenuBar.LinkRow(
                             symbol: "chart.bar",
-                            title: "Today",
-                            value: "\(UsageFormat.cost(usage.snapshot.todayUSD)) USD"
+                            title: "Today · USD",
+                            value: UsageFormat.cost(usage.snapshot.todayUSD)
                         )
                     }
                     .buttonStyle(.plain)
