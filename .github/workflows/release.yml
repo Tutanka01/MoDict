@@ -30,8 +30,11 @@ jobs:
       - name: Install the Metal Toolchain
         run: xcrun --sdk macosx metal --version || xcodebuild -downloadComponent MetalToolchain
 
+      # One test at a time, as in build.yml: run together on the runner's three
+      # cores, the tests that wait on real time starve each other.
       - name: Run tests
-        run: swift test
+        run: swift test --no-parallel
+        timeout-minutes: 20
 
       # Strip the leading "v" from the tag so the DMG is MoDict-0.1.0.dmg.
       - name: Derive version from tag

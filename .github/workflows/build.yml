@@ -28,8 +28,12 @@ jobs:
 
       # Runs for real here: the runner has full Xcode. Local CLT-only setups
       # cannot execute tests (no xctest host) — see `make test`.
+      # One test at a time: the runner has three cores, and the capture, hotkey and
+      # deadline tests hold a thread while they wait on real time. Run together they
+      # starve each other there: five failed on one run and another never finished.
       - name: Run tests
-        run: swift test
+        run: swift test --no-parallel
+        timeout-minutes: 20
 
       - name: Build (release, arm64)
         run: swift build -c release
