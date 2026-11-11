@@ -13,6 +13,47 @@ and publishes `MoDict-X.Y.Z.dmg` on the
 - Highlight 2
 -->
 
+## v0.12.0 — 2026-11-11
+
+French that is understood, and a dictation key that always answers: a new local
+model that makes about a third fewer word errors than Parakeet v3 and takes no
+memory at rest, on top of a rebuilt capture and hotkey path.
+
+- **Cohere Transcribe, the new recommended model.** Measured on French with human
+  references (`Docs/research/french-engine-comparison.md`): 6.6% word errors on
+  read speech where Parakeet v3 makes 7.8%, 7.5% against 10.5% on talks, and
+  7.8% against 14.3% on dictations of 18 to 45 s. Its prompt names the language,
+  so French no longer slides into English. It is the default for new installs
+  on Macs with 16 GB of memory or more; Parakeet v3 stays the light model and
+  the default below that. An existing install keeps its model: switch in
+  Settings › Model (a 1.7 GB download).
+- **Nothing in memory at rest.** The weights load when you press the key, while
+  you speak (0.3 to 1.4 s), and leave memory a minute after your last dictation:
+  about 2.8 GB while a dictation runs, about 150 MB for the whole app afterwards.
+- **The preview is the text.** Cohere writes its own live preview, an update a
+  second, so the words you read are the ones about to be pasted (30 of 647 words
+  differed on the test clips). It shows nothing until a voice is heard.
+- **One language at a time.** Cohere does not detect the language: Automatic
+  uses your Mac's, and Settings › Dictation lists the fourteen it writes.
+- **A dictation key that always answers.** The key is watched on its own thread
+  with health checks and a missed-release poll, capture runs off the main thread
+  and keeps the 0.2 s after you release, and a hold without speech pastes nothing
+  and reaches no cloud (`SpeechGate`, Silero VAD shipped in the app).
+- **Kinder to your setup.** With System default, a Bluetooth headset keeps its
+  high-quality audio when the Mac's own microphone works; paste finds V on any
+  keyboard layout; smart spacing adds the space your words need; one copy of the
+  app runs at a time and the Mac stays awake during a dictation.
+- Qwen3-ASR stays selectable and is no longer described as the best French model:
+  it measured behind Parakeet at fifty times the memory. Costs read `0,05 $` on a
+  French Mac instead of `0,05 $US USD`.
+
+The benchmark mode now reports load time, memory loaded and released, and how
+close the live preview is to the final text (`Docs/research/transcription-benchmark.md`).
+
+Requires macOS 15+ on Apple Silicon. Local builds keep the `MoDict Dev`
+signing identity and the `com.modict.app` bundle ID, so TCC permissions,
+models and history survive the update.
+
 ## v0.11.0 — 2026-10-01
 
 The live preview stays on its rails: no rewrapping, no sideways jolt, no
