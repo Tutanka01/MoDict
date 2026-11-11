@@ -261,11 +261,21 @@ struct SpeechGateModelTests {
         let say = Process()
         say.executableURL = URL(fileURLWithPath: "/usr/bin/say")
         say.arguments = ["-v", voice, "-o", file.path, text]
+        // Bounded: on a CI runner `say` has stopped answering, and an unbounded
+        // wait then holds a thread, and with it the whole run, until the job's limit.
+        let exited = DispatchSemaphore(value: 0)
+        say.terminationHandler = { _ in exited.signal() }
         try say.run()
-        say.waitUntilExit()
+        guard exited.wait(timeout: .now() + Self.synthesisLimit) == .success else {
+            say.terminate()
+            throw SynthesisTimedOut()
+        }
         try #require(say.terminationStatus == 0)
         return try AudioConverter().resampleAudioFile(file)
     }
+
+    private static let synthesisLimit: TimeInterval = 60
+    private struct SynthesisTimedOut: Error {}
 
     @Test
     func noiseAndToneAreNotSpeech() async throws {
